@@ -425,6 +425,18 @@ class PDBaseSolver:
                     linops,
                     coils,
                     model)
+        elif reg_type == 'LOG':
+            L = np.float32(0.5 * (18.0 + np.sqrt(33)))
+            pdop = PDSolverLog(
+                par,
+                irgn_par,
+                queue,
+                np.float32(1 / np.sqrt(L)),
+                init_fval,
+                prg,
+                linops,
+                coils,
+                model)
         else:
             raise NotImplementedError
         return pdop
@@ -863,7 +875,6 @@ class PDBaseSolver:
             wait_for=(
                 x_new.events + x.events + Kyk.events +
                 xk.events + ATd.events + wait_for))
-
 
 class PDSolverTV(PDBaseSolver):
     """
@@ -2311,3 +2322,244 @@ class PDSolverStreamedTVSMS(PDSolverStreamedTV):
         lhs = np.sqrt(beta)*tau*np.abs(lhs1+lhs2+lhs3)**(1/2)
 
         return lhs, ynorm
+
+
+class PDSolverLog(PDBaseSolver):
+    """
+        Primal Dual splitting optimization for Log barrier.
+
+        This Class performs a primal-dual variable splitting based reconstruction
+        on single precission complex input data.
+        """
+    def __init__(self, par, irgn_par, queue, tau, fval, prg,
+                 linop, coils, model):
+        """
+        Log PD reconstruction Object.
+
+        Args
+        ----
+          par (dict): A python dict containing the necessary information to
+            setup the object. Needs to contain the number of slices (NSlice),
+            number of scans (NScan), image dimensions (dimX, dimY), number of
+            coils (NC), sampling points (N) and read outs (NProj)
+            a PyOpenCL queue (queue) and the complex coil
+            sensitivities (C).
+          irgn_par (dict): A python dict containing the regularization
+            parameters for a given gauss newton step.
+          queue (list): A list of PyOpenCL queues to perform the optimization.
+          tau (float): Estimate of the initial step size based on the
+            operator norm of the linear operator.
+          fval (float): Estimate of the initial cost function value to
+            scale the displayed values.
+          prg (PyOpenCL Program): A PyOpenCL Program containing the
+            kernels for optimization.
+          reg_type (string): String to choose between "TV" and "TGV"
+            optimization.
+          data_operator (PyQMRI Operator): The operator to traverse from
+            parameter to data space.
+          coils (PyOpenCL Buffer or empty List): optional coil buffer.
+          NScan (int): Number of Scan which should be used internally. Do not
+            need to be the same number as in par["NScan"]
+          trafo (bool): Switch between radial (1) and Cartesian (0) fft.
+          and slice accelerated (1) reconstruction.
+        """
+        super().__init__(
+            par,
+            irgn_par,
+            queue,
+            tau,
+            fval,
+            prg,
+            coils,
+            model)
+        self.alpha = irgn_par["gamma"]
+        self._op = linop[0]
+        self.grad_op = linop[1]
+
+    def _setupVariables(self, inp, data):
+        data = clarray.to_device(self._queue[0], data.astype(DTYPE))
+
+        primal_vars = {}
+        primal_vars_new = {}
+        tmp_results_adjoint = {}
+        tmp_results_adjoint_new = {}
+
+        primal_vars["x"] = clarray.to_device(self._queue[0], inp)
+        primal_vars["xk"] = primal_vars["x"].copy()
+        primal_vars_new["x"] = clarray.empty_like(primal_vars["x"])
+
+        tmp_results_adjoint["Kyk1"] = clarray.empty_like(primal_vars["x"])
+        tmp_results_adjoint_new["Kyk1"] = clarray.empty_like(primal_vars["x"])
+
+        dual_vars = {}
+        dual_vars_new = {}
+        tmp_results_forward = {}
+        tmp_results_forward_new = {}
+        dual_vars["r"] = clarray.zeros(
+            self._queue[0],
+            data.shape,
+            dtype=DTYPE)
+        dual_vars_new["r"] = clarray.empty_like(dual_vars["r"])
+
+        dual_vars["z1"] = clarray.zeros(self._queue[0],
+                                        primal_vars["x"].shape + (4,),
+                                        dtype=DTYPE)
+        dual_vars_new["z1"] = clarray.empty_like(dual_vars["z1"])
+
+        tmp_results_forward["gradx"] = clarray.empty_like(
+            dual_vars["z1"])
+        tmp_results_forward_new["gradx"] = clarray.empty_like(
+            dual_vars["z1"])
+        tmp_results_forward["Ax"] = clarray.empty_like(data)
+        tmp_results_forward_new["Ax"] = clarray.empty_like(data)
+
+        return (primal_vars,
+                primal_vars_new,
+                tmp_results_forward,
+                tmp_results_forward_new,
+                dual_vars,
+                dual_vars_new,
+                tmp_results_adjoint,
+                tmp_results_adjoint_new,
+                data)
+
+
+    def _updateInitial(self,
+                       out_fwd, out_adj,
+                       in_primal, in_dual):
+        out_adj["Kyk1"].add_event(
+            self._op.adjKyk1(out_adj["Kyk1"],
+                             [in_dual["r"], in_dual["z1"],
+                              self._coils,
+                              self.modelgrad,
+                              self.grad_op._ratio]))
+
+        out_fwd["Ax"].add_event(self._op.fwd(
+            out_fwd["Ax"], [in_primal["x"], self._coils, self.modelgrad]))
+        out_fwd["gradx"].add_event(
+            self.grad_op.fwd(out_fwd["gradx"], in_primal["x"]))
+
+    def _updatePrimal(self,
+                      out_primal, out_fwd,
+                      in_primal, in_precomp_adj,
+                      tau):
+        out_primal["x"].add_event(self.update_primal(
+            outp=out_primal["x"],
+            inp=(in_primal["x"], in_precomp_adj["Kyk1"],
+                 in_primal["xk"], self.jacobi),
+            par=(tau, self.delta)))
+
+        out_fwd["gradx"].add_event(
+            self.grad_op.fwd(
+                out_fwd["gradx"], out_primal["x"]))
+
+        out_fwd["Ax"].add_event(
+            self._op.fwd(out_fwd["Ax"],
+                         [out_primal["x"],
+                          self._coils,
+                          self.modelgrad]))
+
+    def _updateDual(self,
+                    out_dual, out_adj,
+                    in_primal,
+                    in_primal_new,
+                    in_dual,
+                    in_precomp_fwd,
+                    in_precomp_fwd_new,
+                    in_precomp_adj,
+                    data,
+                    beta,
+                    tau,
+                    theta):
+        out_dual["z1"].add_event(
+            self.update_z1_tv(
+                outp=out_dual["z1"],
+                inp=(
+                        in_dual["z1"],
+                        in_precomp_fwd_new["gradx"],
+                        in_precomp_fwd["gradx"],
+                    ),
+                par=(beta*tau, theta, self.alpha, self.omega)
+                )
+            )
+
+        out_dual["r"].add_event(
+            self.update_r(
+                outp=out_dual["r"],
+                inp=(
+                        in_dual["r"],
+                        in_precomp_fwd_new["Ax"],
+                        in_precomp_fwd["Ax"],
+                        data
+                     ),
+                par=(beta*tau, theta, self.lambd)
+                )
+            )
+
+        out_adj["Kyk1"].add_event(
+            self._op.adjKyk1(
+                out_adj["Kyk1"],
+                [out_dual["r"], out_dual["z1"],
+                 self._coils,
+                 self.modelgrad,
+                 self.grad_op._ratio]))
+
+        ynorm = (
+            (
+                clarray.vdot(
+                    out_dual["r"] - in_dual["r"],
+                    out_dual["r"] - in_dual["r"]
+                    )
+                + clarray.vdot(
+                    out_dual["z1"] - in_dual["z1"],
+                    out_dual["z1"] - in_dual["z1"]
+                    )
+            )**(1 / 2)).real
+        lhs = np.sqrt(beta) * tau * (
+            (
+                clarray.vdot(
+                    out_adj["Kyk1"] - in_precomp_adj["Kyk1"],
+                    out_adj["Kyk1"] - in_precomp_adj["Kyk1"]
+                    )
+            )**(1 / 2)).real
+        return lhs.get(), ynorm.get()
+
+    def _calcResidual(
+            self,
+            in_primal,
+            in_dual,
+            in_precomp_fwd,
+            in_precomp_adj,
+            data):
+
+        primal_new = (
+            self.lambd / 2 * clarray.vdot(
+                in_precomp_fwd["Ax"] - data,
+                in_precomp_fwd["Ax"] - data)
+            + self.alpha * clarray.sum(
+                abs(in_precomp_fwd["gradx"])
+                )
+            + 1 / (2 * self.delta) * clarray.vdot(
+                (in_primal["x"] - in_primal["xk"])*self.jacobi,
+                in_primal["x"] - in_primal["xk"]
+                )
+            ).real
+
+        dual = (
+            -self.delta / 2 * clarray.vdot(
+                - in_precomp_adj["Kyk1"],
+                - in_precomp_adj["Kyk1"])
+            - clarray.vdot(
+                in_primal["xk"],
+                - in_precomp_adj["Kyk1"]
+                )
+            - 1 / (2 * self.lambd) * clarray.vdot(
+                in_dual["r"],
+                in_dual["r"])
+            - clarray.vdot(data, in_dual["r"])
+            ).real
+
+
+        gap = np.abs(primal_new - dual)
+        return primal_new.get(), dual.get(), gap.get()
+

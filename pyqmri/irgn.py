@@ -377,7 +377,10 @@ class IRGNOptimizer:
 
         datacost = self.irgn_par["lambd"] / 2 * np.linalg.norm(data - b)**2
         L2Cost = np.linalg.norm(x)/(2.0*self.irgn_par["delta"])
-        if self.reg_type == 'TV':
+        if self.reg_type == 'LOG':
+            regcost = self.irgn_par["gamma"] * \
+                    np.sum(np.abs(grad_tv))
+        elif self.reg_type == 'TV':
             regcost = self.irgn_par["gamma"] * \
                 np.sum(np.abs(grad_tv))
         else:

@@ -70,6 +70,8 @@ def gen_default_config():
     config['TGV']["gamma_dec"] = '0.7'
     config['TGV']["omega_dec"] = '0.5'
 
+    config['LOG'] = {}
+
     config['TV'] = {}
     config['TV']["max_iters"] = '1000'
     config['TV']["start_iters"] = '10'

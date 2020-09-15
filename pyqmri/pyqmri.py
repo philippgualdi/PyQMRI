@@ -815,7 +815,7 @@ if __name__ == '__main__':
     argparmain.add_argument(
       '--reg_type', default='TGV', dest='reg',
       help="Choose regularization type (default: TGV) "
-           "options are: TGV, TV, all")
+           "options are: TGV, TV, LOG, all")
     argparmain.add_argument(
       '--slices', default=-1, dest='slices', type=int,
       help="Number of reconstructed slices (default=40). "
