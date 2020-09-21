@@ -14,6 +14,7 @@ import numpy as np
 from pkg_resources import resource_filename
 import pyopencl as cl
 import pyopencl.array as clarray
+import pyopencl.clmath as clmath
 import pyqmri.operator as operator
 from pyqmri._helper_fun import CLProgram as Program
 import sys
@@ -2363,6 +2364,7 @@ class PDSolverLog(PDBaseSolver):
           trafo (bool): Switch between radial (1) and Cartesian (0) fft.
           and slice accelerated (1) reconstruction.
         """
+        print("Start Log barrier programm")
         super().__init__(
             par,
             irgn_par,
@@ -2536,6 +2538,9 @@ class PDSolverLog(PDBaseSolver):
             self.lambd / 2 * clarray.vdot(
                 in_precomp_fwd["Ax"] - data,
                 in_precomp_fwd["Ax"] - data)
+            + clarray.sum(
+                clmath.log(1 + self.alpha * clarray.vdot(in_precomp_fwd["gradx"], in_precomp_fwd["gradx"]))
+                )
             + self.alpha * clarray.sum(
                 abs(in_precomp_fwd["gradx"])
                 )

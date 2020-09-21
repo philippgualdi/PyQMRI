@@ -378,8 +378,7 @@ class IRGNOptimizer:
         datacost = self.irgn_par["lambd"] / 2 * np.linalg.norm(data - b)**2
         L2Cost = np.linalg.norm(x)/(2.0*self.irgn_par["delta"])
         if self.reg_type == 'LOG':
-            regcost = self.irgn_par["gamma"] * \
-                    np.sum(np.abs(grad_tv))
+            regcost = np.sum(np.log(1 + self.irgn_par["gamma"] * np.vdot(grad_tv, grad_tv)))
         elif self.reg_type == 'TV':
             regcost = self.irgn_par["gamma"] * \
                 np.sum(np.abs(grad_tv))
@@ -404,7 +403,10 @@ class IRGNOptimizer:
         print("-" * 75)
         print("Initial Cost: %f" % (self._fval_init))
         print("Costs of Data: %f" % (1e3*datacost / self._fval_init))
-        print("Costs of T(G)V: %f" % (1e3*regcost / self._fval_init))
+        if self.reg_type == 'LOG':
+            print("Costs of LOG: %f" % (1e3 * regcost / self._fval_init))
+        else:
+            print("Costs of T(G)V: %f" % (1e3*regcost / self._fval_init))
         print("Costs of L2 Term: %f" % (1e3*L2Cost / self._fval_init))
         print("-" * 75)
         print("Function value at GN-Step %i: %f" %
