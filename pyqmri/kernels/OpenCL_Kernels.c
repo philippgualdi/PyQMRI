@@ -1232,3 +1232,66 @@ __kernel void operator_ad_cg(
         out[scan*NSl*X*Y+k*X*Y+y*X+x] = sum;
     }
 }
+
+
+__kernel void update_ipiano_fwd(
+__global float2 *u_new,
+__global float2 *u,
+__global float2 *Kyk,
+__global float2 *u_k,
+__global float2 *u_old,
+const float alpha,
+const float beta,
+const float tauinv,
+const float div,
+__global float* min,
+__global float* max,
+__global int* real, const int NUk
+)
+{
+    size_t Nx = get_global_size(2), Ny = get_global_size(1);
+    size_t NSl = get_global_size(0);
+    size_t x = get_global_id(2), y = get_global_id(1);
+    size_t k = get_global_id(0);
+    size_t i = k*Nx*Ny+Nx*y + x;
+    float norm = 0;
+    int idx, idx2, idx3, idx4, idx5;
+    float2 tmp;
+
+    for (int uk=0; uk<NUk; uk++)
+    {
+        u_new[i] = (u[i] - alpha*Kyk[i] + beta*(u[i] - u_old[i]) + tauinv*u_k[i])*div;
+        /*
+        if(real[uk]>=1)
+        {
+            u_new[i].s1 = 0.0f;
+            if (u_new[i].s0<min[uk])
+            {
+                u_new[i].s0 = min[uk];
+            }
+            if(u_new[i].s0>max[uk])
+            {
+                u_new[i].s0 = max[uk];
+            }
+        }
+        else
+        {
+            norm =  sqrt(
+              pow(
+                (float)(u_new[i].s0),(float)(2.0))
+              + pow((float)(u_new[i].s1),(float)(2.0)));
+            if (norm<min[uk])
+            {
+                u_new[i].s0 *= 1/norm*min[uk];
+                u_new[i].s1 *= 1/norm*min[uk];
+            }
+            if(norm>max[uk])
+            {
+                u_new[i].s0 *= 1/norm*max[uk];
+                u_new[i].s1 *= 1/norm*max[uk];
+            }
+        }
+        */
+        i += NSl*Nx*Ny;
+    }
+}

@@ -23,7 +23,7 @@ from pyqmri._helper_fun._est_coils import est_coils
 from pyqmri._helper_fun import _utils as utils
 from pyqmri.solver import CGSolver
 from pyqmri.irgn import IRGNOptimizer
-
+from pyqmri.ipiano import IPianoOptimizer
 
 def _choosePlatform(myargs, par):
     platforms = cl.get_platforms()
@@ -326,6 +326,7 @@ def _readInput(myargs, par):
 
 def _read_data_from_file(par, myargs):
     reco_Slices = myargs.slices
+    print(par["file"].keys())
     dimX, dimY, NSlice = ((par["file"].attrs['image_dimensions']).astype(int))
     if reco_Slices == -1:
         reco_Slices = NSlice
@@ -610,6 +611,7 @@ def _start_recon(myargs):
 ###############################################################################
 # initialize operator  ########################################################
 ###############################################################################
+    '''
     opt = IRGNOptimizer(par,
                         model,
                         trafo=myargs.trafo,
@@ -620,6 +622,18 @@ def _start_recon(myargs):
                         reg_type=myargs.reg,
                         DTYPE=par["DTYPE"],
                         DTYPE_real=par["DTYPE_real"])
+    '''
+    opt = IPianoOptimizer(par,
+                        model,
+                        trafo=myargs.trafo,
+                        imagespace=myargs.imagespace,
+                        SMS=myargs.sms,
+                        config=myargs.config,
+                        streamed=myargs.streamed,
+                        reg_type=myargs.reg,
+                        DTYPE=par["DTYPE"],
+                        DTYPE_real=par["DTYPE_real"])
+
     f = h5py.File(par["outdir"]+"output_" + par["fname"], "a")
     f.create_dataset("images_ifft", data=images)
     f.attrs['data_norm'] = par["dscale"]
