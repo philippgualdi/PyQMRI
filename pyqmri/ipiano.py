@@ -29,8 +29,8 @@ class IPianoOptimizer:
                  DTYPE=np.complex64, DTYPE_real=np.float32):
         self.par = par
         self.gn_res = []
-        self.irgn_par = utils.read_config(config, reg_type)
-        utils.save_config(self.irgn_par, par["outdir"], reg_type)
+        self.ipiano_par = utils.read_config(config, reg_type)
+        utils.save_config(self.ipiano_par, par["outdir"], reg_type)
         num_dev = len(par["num_dev"])
         self._fval_old = 0
         self._fval = 0
@@ -134,7 +134,7 @@ class IPianoOptimizer:
             self._prg,
             self._queue,
             self.par,
-            self.irgn_par,
+            self.ipiano_par,
             self._fval_init,
             self._coils,
             linops=(self._MRI_operator, self._grad_op),
@@ -175,13 +175,13 @@ class IPianoOptimizer:
               data : numpy.array
                 the data to perform optimization/fitting on.
         """
-        # self.irgn_par["lambd"] *= (
+        # self.ipiano_par["lambd"] *= (
         #                             (self.par["SNR_est"]))
-        self._gamma = self.irgn_par["gamma"]
-        self._delta = self.irgn_par["delta"]
-        self._omega = self.irgn_par["omega"]
+        self._gamma = self.ipiano_par["gamma"]
+        self._delta = self.ipiano_par["delta"]
+        self._omega = self.ipiano_par["omega"]
 
-        #iters = self.irgn_par["start_iters"]
+        #iters = self.ipiano_par["start_iters"]
         result = np.copy(self._model.guess)
         result_new = np.copy(self._model.guess)
 
@@ -190,7 +190,8 @@ class IPianoOptimizer:
                 np.transpose(data, self._data_trans_axes),
                 requirements='C')
 
-        self._step_val = np.nan_to_num(self._model.execute_forward(result))
+        #TODO: delete line
+        #self._step_val = np.nan_to_num(self._model.execute_forward(result))
 
         if self._streamed:
             if self._SMS is False:
@@ -199,7 +200,7 @@ class IPianoOptimizer:
 
         self._pdop.model = self._model
 
-        for ign in range(self.irgn_par["max_gn_it"]):
+        for ign in range(self.ipiano_par["max_gn_it"]):
             start = time.time()
             result_old = result
             result = result_new
@@ -236,11 +237,11 @@ class IPianoOptimizer:
                     self._queue[0],
                     _jacobi)
             self._updateIPIANORegPar(ign)
-            self._pdop.updateRegPar(self.irgn_par)
+            self._pdop.updateRegPar(self.ipiano_par)
 
             result_new = self._ipianoSolve3D(result, result_old, data, ign)
 
-            #iters = np.fmin(iters * 2, self.irgn_par["max_iters"])
+            #iters = np.fmin(iters * 2, self.ipiano_par["max_iters"])
 
             end = time.time() - start
             self.gn_res.append(self._fval)
@@ -252,20 +253,20 @@ class IPianoOptimizer:
         self._calcResidual(result_new, data, ign + 1)
 
     def _updateIPIANORegPar(self, ign):
-        self.irgn_par["delta"] = np.minimum(
+        self.ipiano_par["delta"] = np.minimum(
             self._delta
-            * self.irgn_par["delta_inc"] ** ign,
-            self.irgn_par["delta_max"])
-        self.irgn_par["gamma"] = np.maximum(
-            self._gamma * self.irgn_par["gamma_dec"] ** ign,
-            self.irgn_par["gamma_min"])
-        self.irgn_par["omega"] = np.maximum(
-            self._omega * self.irgn_par["omega_dec"] ** ign,
-            self.irgn_par["omega_min"])
+            * self.ipiano_par["delta_inc"] ** ign,
+            self.ipiano_par["delta_max"])
+        self.ipiano_par["gamma"] = np.maximum(
+            self._gamma * self.ipiano_par["gamma_dec"] ** ign,
+            self.ipiano_par["gamma_min"])
+        self.ipiano_par["omega"] = np.maximum(
+            self._omega * self.ipiano_par["omega_dec"] ** ign,
+            self.ipiano_par["omega_min"])
 
         # TODO: beta and alpha calc
-        self.irgn_par["beta"] = 0.04
-        self.irgn_par["alpha"] = 0.6
+        #self.ipiano_par["beta"] = 0.04
+        self.ipiano_par["alpha"] = 2*(1 - self.ipiano_par["beta"])/1.
 
     def _balanceModelGradients(self, result):
         scale = np.reshape(
@@ -354,14 +355,14 @@ class IPianoOptimizer:
             grad_H1 = grad[self.par["unknowns_TGV"]:]
         del grad
 
-        datacost = self.irgn_par["lambd"] / 2 * np.linalg.norm(data - b) ** 2
-        L2Cost = np.linalg.norm(x) / (2.0 * self.irgn_par["delta"])
-        regcost = np.sum(np.abs(np.log(1 + self.irgn_par["gamma"] * np.vdot(grad_tv, grad_tv))))
+        datacost = self.ipiano_par["lambd"] / 2 * np.linalg.norm(data - b) ** 2
+        L2Cost = np.linalg.norm(x) / (2.0 * self.ipiano_par["delta"])
+        regcost = np.sum(np.abs(np.log(1 + self.ipiano_par["gamma"] * np.vdot(grad_tv, grad_tv))))
 
         self._fval = (datacost +
                       regcost +
                       L2Cost +
-                      self.irgn_par["omega"] / 2 *
+                      self.ipiano_par["omega"] / 2 *
                       np.linalg.norm(grad_H1) ** 2)
         del grad_tv, grad_H1
 

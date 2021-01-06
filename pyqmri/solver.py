@@ -3550,8 +3550,8 @@ class IPianoSolverLog(IPanoBaseSolver):
 
         out_tmp['gradFx'] = out_tmp['DADA'] - out_tmp['DAd'] + \
                             self.lambd * \
-                            (clarray.vdot(out_tmp['gradx'], out_tmp['gradx']) /\
-                            (1 + self.alpha * clarray.vdot(out_tmp['gradx'], out_tmp['gradx']))).get()
+                            abs((clarray.vdot(out_tmp['gradx'], out_tmp['gradx']) / \
+                            (1 + self.alpha * clarray.vdot(out_tmp['gradx'], out_tmp['gradx']))).get())
         #TODO: remove gradGx
         #out_tmp['gradGx'] = 1/self.gamma * (out_step["x"] - self.modelgrad)
         #out_tmp['gradGx'] += 1e-8

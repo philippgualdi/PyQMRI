@@ -1261,7 +1261,7 @@ __global int* real, const int NUk
     for (int uk=0; uk<NUk; uk++)
     {
         u_new[i] = (u[i] - alpha*Kyk[i] + beta*(u[i] - u_old[i]) + tauinv*u_k[i])*div;
-        /*
+
         if(real[uk]>=1)
         {
             u_new[i].s1 = 0.0f;
@@ -1291,7 +1291,7 @@ __global int* real, const int NUk
                 u_new[i].s1 *= 1/norm*max[uk];
             }
         }
-        */
+
         i += NSl*Nx*Ny;
     }
 }

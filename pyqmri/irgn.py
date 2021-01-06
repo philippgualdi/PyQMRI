@@ -360,7 +360,7 @@ class IRGNOptimizer:
         f = h5py.File(self.par["outdir"]+"output_" + self.par["fname"], "a")
         if self._reg_type == 'TGV':
             f.create_dataset("tgv_result_iter_"+str(myit), result.shape,
-                             dtype=DTYPE, data=result)
+                             dtype=self._DTYPE, data=result)
             f.attrs['res_tgv_iter_'+str(myit)] = self._fval
         else:
             f.create_dataset("tv_result_"+str(myit), result.shape,
@@ -483,7 +483,7 @@ class IRGNOptimizer:
         grad = grad.get()
         sym_grad = None
         if self._reg_type == 'TGV':
-            v = clarray.to_device(self._queue[0], self.v)
+            v = clarray.to_device(self._queue[0], self._v)
             sym_grad = clarray.to_device(self._queue[0],
                                          np.zeros(x.shape+(8,),
                                                   dtype=self._DTYPE))
