@@ -3424,7 +3424,7 @@ class IPanoBaseSolver:
         self._fval_init = fval
 
 
-class IPianoSolverLog(IPanoBaseSolver):
+class IPianoSolverLog(IPianoBaseSolver):
     """Primal Dual splitting optimization for Log.
 
         This Class performs a primal-dual variable splitting based reconstruction
@@ -3465,11 +3465,12 @@ class IPianoSolverLog(IPanoBaseSolver):
             TV regularization weight
         """
 
-    def __init__(self,
+    def __init__(
+        self,
                  par,
                  irgn_par,
                  queue,
-                 #tau,
+        # tau,
                  fval,
                  prg,
                  linop,
@@ -3481,15 +3482,16 @@ class IPianoSolverLog(IPanoBaseSolver):
             par,
             irgn_par,
             queue,
-            #tau,
+            # tau,
             fval,
             prg,
             coils,
             model,
-            **kwargs)
-        self.gamma = irgn_par["gamma"]
-        self.alpha = 0.6 #irgn_par["alpha"]
-        self.beta = 0.4 #irgn_par["beta"]
+            **kwargs
+        )
+        self.gamma = 10000  # irgn_par["gamma"]
+        self.alpha = 0.000001  # irgn_par["alpha"]
+        self.beta = 0.1  # irgn_par["beta"]
         self._op = linop[0]
         self._grad_op = linop[1]
 
@@ -3506,91 +3508,98 @@ class IPianoSolverLog(IPanoBaseSolver):
 
         step_vars_new["x"] = clarray.empty_like(step_vars["x"])
 
-        tmp_results['gradFx'] = step_vars["x"].copy()
-        tmp_results['gradGx'] = step_vars["x"].copy()
+        tmp_results["gradFx"] = step_vars["x"].copy()
+        tmp_results["gradGx"] = step_vars["x"].copy()
         tmp_results["DADA"] = clarray.empty_like(step_vars["x"])
         tmp_results["DAd"] = clarray.empty_like(step_vars["x"])
-        tmp_results['d'] = data.copy()
+        tmp_results["d"] = data.copy()
         tmp_results["Ax"] = clarray.empty_like(data)
 
-        tmp_results["gradx"] = clarray.zeros(self._queue[0],
-                                        step_vars["x"].shape + (4,),
-                                        dtype=self._DTYPE)
+        tmp_results["gradx"] = clarray.zeros(
+            self._queue[0], step_vars["x"].shape + (4,), dtype=self._DTYPE
+        )
 
-        return (step_vars,
-                step_vars_new,
-                tmp_results,
-                data)
+        return (step_vars, step_vars_new, tmp_results, data)
 
-    def _updateInitial(self,
-                       out_fwd,
-                       tmp_res,
-                       in_step):
-        tmp_res["gradx"].add_event(
-            self._grad_op.fwd(tmp_res["gradx"], out_fwd["x"]))
-        tmp_res["Ax"].add_event(self._op.fwd(
-            tmp_res["Ax"], [in_step["x"], self._coils, self.modelgrad]))
+    def _updateInitial(self, out_fwd, tmp_res, in_step):
+
+        tmp_res["Ax"].add_event(
+            self._op.fwd(tmp_res["Ax"], [in_step["x"], self._coils, self.modelgrad])
+        )
         tmp_res["DADA"].add_event(
-            self._op.adj(tmp_res["DADA"],
-                             [tmp_res["Ax"],
-                              self._coils,
-                              self.modelgrad,
-                              self._grad_op.ratio], wait_for=tmp_res["Ax"].events))
+            self._op.adj(
+                tmp_res["DADA"],
+                [tmp_res["Ax"], self._coils, self.modelgrad, self._grad_op.ratio],
+                wait_for=tmp_res["Ax"].events,
+            )
+        )
         tmp_res["DAd"].add_event(
-            self._op.adj(tmp_res["DAd"],
-                         [tmp_res["d"],
-                          self._coils,
-                          self.modelgrad,
-                          self._grad_op.ratio]))
+            self._op.adj(
+                tmp_res["DAd"],
+                [tmp_res["d"], self._coils, self.modelgrad, self._grad_op.ratio],
+            )
+        )
 
+        tmp_res["gradx"].add_event(self._grad_op.fwd(tmp_res["gradx"], out_fwd["x"]))
 
+    def _update(self, out_step, out_tmp, in_step):
 
-    def _update(self, out_step, out_tmp,
-                      in_step):
+        out_tmp["gradFx"] = (
+            out_tmp["DADA"]
+            - out_tmp["DAd"]
+            + self.lambd
+            * abs(
+                (
+                    clarray.vdot(out_tmp["gradx"], out_tmp["gradx"])
+                    / (
+                        1
+                        + self.lambd * clarray.vdot(out_tmp["gradx"], out_tmp["gradx"])
+                    )
+                ).get()
+            )
+        )
+        # TODO: remove gradGx
+        # out_tmp['gradGx'] = 1/self.gamma * (out_step["x"] - self.modelgrad)
+        # out_tmp['gradGx'] += 1e-8
 
-        out_tmp['gradFx'] = out_tmp['DADA'] - out_tmp['DAd'] + \
-                            self.lambd * \
-                            abs((clarray.vdot(out_tmp['gradx'], out_tmp['gradx']) / \
-                            (1 + self.alpha * clarray.vdot(out_tmp['gradx'], out_tmp['gradx']))).get())
-        #TODO: remove gradGx
-        #out_tmp['gradGx'] = 1/self.gamma * (out_step["x"] - self.modelgrad)
-        #out_tmp['gradGx'] += 1e-8
-
-        #I = np.eye(self.modelgrad.shape[-1], dtype=self._DTYPE)
-        #tmp_results['gradGx'][:, ...] = np.linalg.inv(self.alpha * tmp_results['gradGx'][:, ...].get() + I)
-        #out_step_new["x"] = tmp_results['gradGx']
+        # I = np.eye(self.modelgrad.shape[-1], dtype=self._DTYPE)
+        # tmp_results['gradGx'][:, ...] = np.linalg.inv(self.alpha * tmp_results['gradGx'][:, ...].get() + I)
+        # out_step_new["x"] = tmp_results['gradGx']
         pass
 
-
-    def _update_fwd(self, out_step_new, out_tmp, in_step ):
-        out_step_new["x"].add_event(self.update_fwd(
+    def _update_fwd(self, out_step_new, out_tmp, in_step):
+        out_step_new["x"].add_event(
+            self.update_fwd(
             outp=out_step_new["x"],
-            inp=(in_step["x"], out_tmp["gradFx"],
-                 in_step["xk"], in_step["xold"]),
-            par=(self.alpha, self.delta, self.alpha, self.beta)))
+                inp=(in_step["x"], out_tmp["gradFx"], in_step["xk"], in_step["xold"]),
+                par=(self.alpha, self.beta, self.gamma),
+            )
+        )
         pass
 
-    def _calcResidual(
-            self,
-            in_step,
-            in_precomp_fwd,
-            in_precomp_adj,
-            data):
+    def _calcResidual(self, step_vars, tmp_results, step_vars_new, data):
 
         # TODO: step_new equal to f(x)
         f_new = (
-            self.lambd / 2 * clarray.vdot(
-                in_precomp_fwd["Ax"] - data,
-                in_precomp_fwd["Ax"] - data)
+            clarray.vdot(tmp_results["DADA"], tmp_results["DAd"])  # self.lambd *
             + clarray.sum(
-                abs(clmath.log(1 + self.alpha * clarray.vdot(in_precomp_fwd["gradx"], in_precomp_fwd["gradx"])))
+                abs(
+                    clmath.log(
+                        1
+                        + self.alpha
+                        * clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
+                    )
+                )
                 )
             ).real
 
         # TODO: g_new equal to g(x)
-        g_new = 1 / (2 * self.delta) * clarray.vdot(
-                (in_step["x"] - in_step["xk"])*self.jacobi,
-                in_step["x"] - in_step["xk"]
+        g_new = (
+            1
+            / (2 * self.delta)
+            * clarray.vdot(  # x_new -xk
+                step_vars_new["x"] - step_vars["xk"],
+                step_vars_new["x"] - step_vars["xk"],
                 ).real
+        )
         return f_new.get(), g_new.get()
-
