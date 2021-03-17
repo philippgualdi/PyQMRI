@@ -204,7 +204,7 @@ class IPianoOptimizer:
 
         self._pdop.model = self._model
 
-        for ign in range(self.ipiano_par["max_gn_it"]):
+        for it in range(self.ipiano_par["max_gn_it"]):
             start = time.time()
 
             self._modelgrad = np.nan_to_num(self._model.execute_gradient(x))
@@ -223,42 +223,57 @@ class IPianoOptimizer:
             self._pdop.modelgrad = self._modelgrad
             # self._pdop.jacobi = clarray.to_device(self._queue[0], _jacobi)
 
-            self._updateIPIANORegPar(ign)
+            self._updateIPIANORegPar(it)
             self._pdop.updateRegPar(self.ipiano_par)
 
             ### ipiano solver execute
-            x_new = self._ipianoSolve3D(x, x_old, data, ign)
+            x_new = self._ipianoSolve3D(x, x_old, data, it)
 
             # iters = np.fmin(iters * 2, self.ipiano_par["max_iters"])
 
             end = time.time() - start
             self.gn_res.append(self._fval)
             print("-" * 75)
-            print("iPIANO-Iter: %d  Elapsed time: %f seconds" % (ign, end))
+            print("iPIANO-Iter: %d  Elapsed time: %f seconds" % (it, end))
             print("-" * 75)
             self._fval_old = self._fval
-            self._saveToFile(ign, self._model.rescale(x_new)["data"])
-        self._calcResidual(x_new, data, ign + 1)
+            self._saveToFile(it, self._model.rescale(x_new)["data"])
+        self._calcResidual(x_new, data, it + 1)
 
-    def _updateIPIANORegPar(self, ign):
+    def _updateIPIANORegPar(self, it):
+        """Update the iPiano parameter.
+
+        This method performs iterative regularized Piano optimization
+        and calls the inner loop after precomputing the current linearization
+        point. Results of the fitting process are saved after each
+        linearization step to the output folder.
+
+        Parameters
+        ----------
+              it : int
+                the actual iteration of the optimization.
+        """
         self.ipiano_par["delta"] = np.minimum(
-            self._delta * self.ipiano_par["delta_inc"] ** ign,
+            self._delta * self.ipiano_par["delta_inc"] ** it,
             self.ipiano_par["delta_max"],
         )
         self.ipiano_par["gamma"] = np.maximum(
-            self._gamma * self.ipiano_par["gamma_dec"] ** ign,
+            self._gamma * self.ipiano_par["gamma_dec"] ** it,
             self.ipiano_par["gamma_min"],
         )
         self.ipiano_par["omega"] = np.maximum(
-            self._omega * self.ipiano_par["omega_dec"] ** ign,
+            self._omega * self.ipiano_par["omega_dec"] ** it,
             self.ipiano_par["omega_min"],
         )
 
-        # TODO: beta and alpha calc
+        # TODO: alpha calc
         # self.ipiano_par["beta"] = 0.04
         self.ipiano_par["alpha"] = 2 * (1 - self.ipiano_par["beta"]) / 1.0
 
     def _balanceModelGradients(self, result):
+        """
+        TODO: doc string
+        """
         scale = np.reshape(
             self._modelgrad,
             (
@@ -300,6 +315,8 @@ class IPianoOptimizer:
     # New .hdf5 save files ########################################################
     ###############################################################################
     def _saveToFile(self, myit, result):
+        """TODO: doc string
+        """
         f = h5py.File(self.par["outdir"] + "output_" + self.par["fname"], "a")
         f.create_dataset(
             "ipiano_result_" + str(myit), result.shape, dtype=self._DTYPE, data=result
@@ -307,15 +324,7 @@ class IPianoOptimizer:
         f.attrs["res_ipiano_iter_" + str(myit)] = self._fval
         f.close()
 
-    ###############################################################################
-    # Precompute constant terms of the GN linearization step ######################
-    # input: linearization point x ################################################
-    # iters: number of innner iterations iters ####################################
-    # data: the input data ########################################################
-    # TV: bool to switch between TV (1) and TGV (0) regularization ################
-    # output: optimal value of x for the inner GN step ############################
-    ###############################################################################
-    ###############################################################################
+
     def _ipianoSolve3D(self, x, xold, data, GN_it):
         b = self._calcResidual(x, data, GN_it)
 
@@ -337,6 +346,8 @@ class IPianoOptimizer:
         return x
 
     def _calcResidual(self, x, data, GN_it):
+        """TODO: doc string
+        """
         b, grad = self._calcFwdGNPartLinear(x)
         grad_tv = grad[: self.par["unknowns_TGV"]]
         grad_H1 = grad[self.par["unknowns_TGV"] :]
@@ -371,6 +382,8 @@ class IPianoOptimizer:
         return b
 
     def _calcFwdGNPartLinear(self, x):
+        """TODO: doc string
+        """
         if self._imagespace is False:
             b = clarray.empty(self._queue[0], self._data_shape, dtype=self._DTYPE)
             self._FT.FFT(

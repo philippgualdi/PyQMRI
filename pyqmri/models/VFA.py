@@ -50,14 +50,14 @@ class Model(BaseModel):
             print("No flipangle correction found!")
 
         phi_corr = np.zeros(
-            (self.NScan, self.NSlice, self.dimY, self.dimX), dtype=self._DTYPE)
+            (self.NScan, self.NSlice, self.dimY, self.dimX), dtype=self._DTYPE
+        )
         for i in range(np.size(par["flip_angle(s)"])):
-            phi_corr[i, :, :, :] = par["flip_angle(s)"][i] *\
-                np.pi / 180 * self.fa_corr
+            phi_corr[i, :, :, :] = par["flip_angle(s)"][i] * np.pi / 180 * self.fa_corr
 
         par["unknowns_TGV"] = 2
         par["unknowns_H1"] = 0
-        par["unknowns"] = par["unknowns_TGV"]+par["unknowns_H1"]
+        par["unknowns"] = par["unknowns_TGV"] + par["unknowns_H1"]
 
         self._sin_phi = np.sin(phi_corr)
         self._cos_phi = np.cos(phi_corr)
@@ -66,13 +66,11 @@ class Model(BaseModel):
             self.uk_scale.append(1)
 
         self.constraints.append(
-            constraints(0 / self.uk_scale[0],
-                        1e5 / self.uk_scale[0],
-                        False))
+            constraints(0 / self.uk_scale[0], 1e5 / self.uk_scale[0], False)
+        )
         self.constraints.append(
-            constraints(np.exp(-self.TR / (50)),
-                        np.exp(-self.TR / (5500)),
-                        True))
+            constraints(np.exp(-self.TR / (50)), np.exp(-self.TR / (5500)), True)
+        )
         self.guess = None
 
         self._ax = None
@@ -108,14 +106,17 @@ class Model(BaseModel):
         const = []
         for constrained in self.constraints:
             const.append(constrained.real)
-        return {"data": tmp_x,
-                "unknown_name": ["M0", "T1"],
-                "real_valued": const}
+        return {"data": tmp_x, "unknown_name": ["M0", "T1"], "real_valued": const}
 
     def _execute_forward_3D(self, x):
         E1 = x[1, ...] * self.uk_scale[1]
-        S = x[0, ...] * self.uk_scale[0] * (-E1 + 1) * self._sin_phi /\
-            (-E1 * self._cos_phi + 1)
+        S = (
+            x[0, ...]
+            * self.uk_scale[0]
+            * (-E1 + 1)
+            * self._sin_phi
+            / (-E1 * self._cos_phi + 1)
+        )
         S[~np.isfinite(S)] = 1e-20
         S = np.array(S, dtype=self._DTYPE)
         return S
@@ -124,12 +125,20 @@ class Model(BaseModel):
         E1 = x[1, ...] * self.uk_scale[1]
         M0 = x[0, ...]
         E1[~np.isfinite(E1)] = 0
-        grad_M0 = self.uk_scale[0] * (-E1 + 1) * self._sin_phi /\
-            (-E1 * self._cos_phi + 1)
-        grad_T1 = M0 * self.uk_scale[0] * self.uk_scale[1] * (-E1 + 1) *\
-            self._sin_phi * self._cos_phi / (-E1 * self._cos_phi + 1)**2 -\
-            M0 * self.uk_scale[0] * self.uk_scale[1] * self._sin_phi /\
-            (-E1 * self._cos_phi + 1)
+        grad_M0 = (
+            self.uk_scale[0] * (-E1 + 1) * self._sin_phi / (-E1 * self._cos_phi + 1)
+        )
+        grad_T1 = M0 * self.uk_scale[0] * self.uk_scale[1] * (
+            -E1 + 1
+        ) * self._sin_phi * self._cos_phi / (
+            -E1 * self._cos_phi + 1
+        ) ** 2 - M0 * self.uk_scale[
+            0
+        ] * self.uk_scale[
+            1
+        ] * self._sin_phi / (
+            -E1 * self._cos_phi + 1
+        )
         grad = np.array([grad_M0, grad_T1], dtype=self._DTYPE)
         grad[~np.isfinite(grad)] = 1e-20
         return grad
@@ -145,12 +154,11 @@ class Model(BaseModel):
             Serves as universal interface. No objects need to be passed
             here.
         """
-        test_T1 = 1500 * np.ones(
-            (self.NSlice, self.dimY, self.dimX), dtype=self._DTYPE)
-        test_M0 = np.ones(
-            (self.NSlice, self.dimY, self.dimX),
-            dtype=self._DTYPE)
+        test_T1 = 1500 * np.ones((self.NSlice, self.dimY, self.dimX), dtype=self._DTYPE)
+        test_M0 = np.ones((self.NSlice, self.dimY, self.dimX), dtype=self._DTYPE)
         test_T1 = np.exp(-self.TR / (test_T1))
-        x = np.array([test_M0 / self.uk_scale[0],
-                      test_T1 / self.uk_scale[1]], dtype=self._DTYPE)
+        x = np.array(
+            [test_M0 / self.uk_scale[0], (test_T1 / self.uk_scale[1]) * 0],
+            dtype=self._DTYPE,
+        )
         self.guess = x
