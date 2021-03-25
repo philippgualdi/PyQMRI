@@ -5,8 +5,9 @@
 # PyQMRI is a free software; you can redistribute it and/or modify it
 # under the terms of the Apache-2.0 License.
 
-import numpy as np
 from abc import ABC
+
+import numpy as np
 import pyopencl.array as clarray
 import pyopencl.clmath as clmath
 
@@ -112,12 +113,11 @@ class IPianoBaseSolver(ABC):
         self.alpha = ipiano_par.get("alpha", 0.)
         self.beta = ipiano_par.get("beta", 1.)
         # Iterations used by the solver
-        self.iters = ipiano_par.get("start_iters", 10)
+        self.iters = ipiano_par.get("max_iters", 10)
         self.tol = ipiano_par["tol"]
         self.stag = ipiano_par["stag"]
         self.display_iterations = ipiano_par["display_iterations"]
         # self.mu = 1 / self.delta
-        # self.tau = tau
         self.beta_line = 1e3  # 1e10#1e12
         self.theta_line = DTYPE_real(1.0)
         self.unknowns_TGV = par["unknowns_TGV"]
@@ -125,7 +125,6 @@ class IPianoBaseSolver(ABC):
         self.unknowns = par["unknowns"]
         self.num_dev = len(par["num_dev"])
         self.dz = par["dz"]
-        # Delete
         self._fval_init = fval
         self._prg = prg
         self._queue = queue
@@ -323,10 +322,12 @@ class IPianoBaseSolver(ABC):
         self.omega = ipiano_par["omega"]
         self.lambd = ipiano_par["lambd"]
         
-        self.alpha = 10**-6
-        self.beta = 0.85
-        self.delta = 0.95
-        self.lambd = 10**5
+        self.alpha = 10**-7
+        self.beta = 0.98
+        self.delta = 0.99
+        self.lambd = 10**4
+        self.omega = 1000
+        self.c2 = 10**5
 
 
     def setFvalInit(self, fval):
@@ -521,10 +522,8 @@ class IPianoSolverLog(IPianoBaseSolver):
 
         tmp_results["gradx"].add_event(self._grad_op.fwd(tmp_results["gradx"], step_in["x"]))
         
-        tmp_results["reg"] = clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]) / (1 \
-                        + self.lambd * clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
-        
-        #if tmp_results["reg"][0]
+        tmp_results["reg"] = self.lambd * (clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]) / \
+                              (1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])))
         
 
     def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
@@ -575,7 +574,16 @@ class IPianoSolverLog(IPianoBaseSolver):
         )
 
     def _update(self, step_out, tmp_results, step_in):
-                
+        # TODO: step size calculation
+        #clarray.vdot(self.modelgrad, step_in["x"])
+        
+        U, M, V = np.linalg.svd(self.modelgrad.get())
+        L = np.power(np.max(M),2)
+        b = (self.omega + L/2)/(self.c2 + L/2)
+        self.beta = (b -1)/(b - 0.5)
+        self.alpha = 2*(1 - self.beta)/(2*self.c2 - L)
+        print("Step Size alpha: %s, beta: %s" % (self.alpha ,self.beta))
+        
         return self.update(
             outp=step_out["x"],
             inp=(step_in["x"], step_in["xold"], tmp_results["gradFx"]), 
@@ -594,25 +602,14 @@ class IPianoSolverLog(IPianoBaseSolver):
         # TODO: step_new equal to f(x)
         f_new = clarray.vdot(
             tmp_results["DADA"], tmp_results["DAd"]
-        ) + clarray.sum(  # self.lambd *
-            abs(
+        ) + clarray.sum(self.lambd *
                 clmath.log(
                     1
                     + self.delta
                     * clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
                 )
-            )
-        )  # .real
+        ) 
 
         # TODO: g_new equal to g(x)
         g_new = 0
-        
-        # (
-        #     1
-        #     / (2 * self.delta)
-        #     * clarray.vdot(  # x_new -xk
-        #         step_vars_new["x"] - step_vars["xk"],
-        #         step_vars_new["x"] - step_vars["xk"],
-        #     )
-        # )  # .real
         return f_new.get(), g_new
