@@ -323,10 +323,10 @@ class IPianoBaseSolver(ABC):
         self.omega = ipiano_par["omega"]
         self.lambd = ipiano_par["lambd"]
         
-        self.alpha = 10**-6
-        self.beta = 0.85
+        self.alpha = 10**-7
+        self.beta = 0.95
         self.delta = 0.95
-        self.lambd = 10**5
+        self.lambd = 10**3
 
 
     def setFvalInit(self, fval):
