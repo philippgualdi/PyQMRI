@@ -8,7 +8,6 @@
 
 
 """ This module holds the classes for IPiano Optimization without streaming.
-
 Attribues:
   DTYPE (complex64):
     Complex working precission. Currently single precission only.
@@ -16,24 +15,24 @@ Attribues:
     Real working precission. Currently single precission only.
 """
 from __future__ import division
-import time
-import numpy as np
 
-from pkg_resources import resource_filename
-import pyopencl.array as clarray
+import time
+
 import h5py
+import numpy as np
+import pyopencl.array as clarray
+from pkg_resources import resource_filename
 
 import pyqmri.operator as operator
-from .solvers import IPianoBaseSolver
 from pyqmri._helper_fun import CLProgram as Program
 from pyqmri._helper_fun import _utils as utils
+
+from .solvers import IPianoBaseSolver
 
 
 class IPianoOptimizer:
     """Main iPiano Optimization class.
-
     This Class performs iPiano Optimization either with LOG(barrier)  # or TV regularization.
-
     Parameters
     ----------
       par : dict
@@ -250,12 +249,10 @@ class IPianoOptimizer:
 
     def execute(self, data):
         """Start the iPiano optimization.
-
         This method performs iterative regularized Piano optimization
         and calls the inner loop after precomputing the current linearization
         point. Results of the fitting process are saved after each
         linearization step to the output folder.
-
         Parameters
         ----------
               data : numpy.array
@@ -314,12 +311,10 @@ class IPianoOptimizer:
 
     def _updateIPIANORegPar(self, it):
         """Update the iPiano parameter.
-
         This method performs iterative regularized Piano optimization
         and calls the inner loop after precomputing the current linearization
         point. Results of the fitting process are saved after each
         linearization step to the output folder.
-
         Parameters
         ----------
               it : int
@@ -337,11 +332,6 @@ class IPianoOptimizer:
             self._omega * self.ipiano_par["omega_dec"] ** it,
             self.ipiano_par["omega_min"],
         )
-
-        # TODO:  calculcate step size
-        self.ipiano_par["beta"] = 0.95
-        self.ipiano_par["alpha"] = 0.09901
-        self.ipiano_par["lambd"] = 100
 
     def _balanceModelGradients(self, result):
         scale = np.reshape(
@@ -421,15 +411,13 @@ class IPianoOptimizer:
         """TODO: doc string
         """
         b, grad = self._calcFwdGNPartLinear(x)
-        grad_tv = grad[: self.par["unknowns_TGV"]]
+        grad_reg = grad[: self.par["unknowns_TGV"]]
         grad_H1 = grad[self.par["unknowns_TGV"] :]
         del grad
 
-        datacost = self.ipiano_par["lambd"] / 2 * np.linalg.norm(data - b) ** 2
+        datacost = 2 * np.linalg.norm(data - b) ** 2
         L2Cost = np.linalg.norm(x) / (2.0 * self.ipiano_par["delta"])
-        regcost = np.sum(
-            np.abs(np.log(1 + self.ipiano_par["gamma"] * np.vdot(grad_tv, grad_tv)))
-        )
+        regcost = self.ipiano_par["lambd"] * np.sum(np.abs(np.log(1 + np.vdot(grad_reg, grad_reg))))
 
         self._fval = (
             datacost
@@ -437,7 +425,7 @@ class IPianoOptimizer:
             + L2Cost
             # + self.ipiano_par["omega"] / 2 * np.linalg.norm(grad_H1) ** 2
         )
-        del grad_tv, grad_H1
+        del grad_reg, grad_H1
 
         if it == 0:
             self._fval_init = self._fval
