@@ -340,8 +340,8 @@ class IPianoOptimizer:
             self.ipiano_par["omega_min"],
         )
 
-        # TODO:  calculcate step size
-        self.ipiano_par["beta"] = 0.95
+        # FIXME:  calculcate step size
+        self.ipiano_par["beta"] = 0.4
         self.ipiano_par["alpha"] = 0.09901
         self.ipiano_par["lambd"] = 100 # Regularization Weigt
         self.ipiano_par["omega"] = 100 # Step size

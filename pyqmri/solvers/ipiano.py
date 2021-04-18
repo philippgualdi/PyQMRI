@@ -245,7 +245,7 @@ class IPianoBaseSolver(ABC):
         """
         self._updateConstraints()
 
-        (step_out, tmp_results, step_in, data) = self._setupVariables(x, data)
+        (step_out, tmp_results, tmp_step, step_in, data) = self._setupVariables(x, data)
 
         for i in range(self.iters):
             self._preUpdate(tmp_results, step_in)
@@ -254,13 +254,15 @@ class IPianoBaseSolver(ABC):
 
             self._update_g(tmp_results, step_in)
 
-            self._calc_stepsize(tmp_results)
+            self._calcStepsize(tmp_step)
 
             self._update(step_out, tmp_results, step_in)
 
             self._postUpdate(step_out, tmp_results, step_in)
 
             if not np.mod(i, 10):
+                print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
+
                 if self.display_iterations:
                     if isinstance(step_out["x"], np.ndarray):
                         self.model.plot_unknowns(step_out["x"])
@@ -279,7 +281,7 @@ class IPianoBaseSolver(ABC):
     def _update_g(self, tmp_results, step_in):
         ...
 
-    def _calc_stepsize(self, tmp_results):
+    def _calcStepsize(self, tmp_step):
         ...
 
     def _update(self, step_out, tmp_results, step_in):
@@ -328,9 +330,9 @@ class IPianoBaseSolver(ABC):
         self.lambd = ipiano_par["lambd"]
 
         self.alpha = 10 ** -7
-        self.beta = 0.98
+        self.beta = 0.95
         self.delta = 0.99
-        self.lambd = 10 ** 4
+        self.lambd =  10 ** -1
         self.omega = 1000
         self.c2 = 10 ** 5
 
@@ -420,15 +422,19 @@ class IPianoSolverLog(IPianoBaseSolver):
         step_in = {}
         step_out = {}
         tmp_results = {}
+        tmp_step = {}
 
         step_in["x"] = clarray.to_device(self._queue[0], x)
         step_in["xold"] = clarray.to_device(self._queue[0], x)
         step_in["xk"] = step_in["x"].copy()
 
         step_out["x"] = clarray.empty_like(step_in["x"])
-
-        tmp_results["x_step"] = step_in["x"].copy()
-        tmp_results["step_fwd"] = clarray.empty_like(step_in["x"])
+        
+        # Stepsize
+        x_step = np.ones(step_in["x"].shape, dtype=self._DTYPE)
+        x_step.imag = np.ones(step_in["x"].shape)
+        tmp_step["x"] = clarray.to_device(self._queue[0], x) # clarray.empty_like(step_in["x"])
+        tmp_step["x_temp"] = step_in["x"].copy() # clarray.empty_like(step_in["x"])
 
         tmp_results["gradFx"] = step_in["x"].copy()
         tmp_results["DADA"] = clarray.empty_like(step_in["x"])
@@ -441,7 +447,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         )
 
         tmp_results["reg"] = clarray.zeros(self._queue[0], (1,), dtype=self._DTYPE)
-        return (step_out, tmp_results, step_in, data)
+        return (step_out, tmp_results, tmp_step, step_in, data)
 
     def update_f(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
         """Forward update of the gradient f(x) function in the iPiano Algorithm.
@@ -538,40 +544,49 @@ class IPianoSolverLog(IPianoBaseSolver):
             / (1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
         )
 
-    def _calc_stepsize(self, tmp_results):
+    def _calcStepsize(self, tmp_step):
+        """Rescale the alpha step size"""
+        
         # TODO: init x with once
         # TODO: For calc fwd adj
-        tmp_results["x_step"] = clarray.zeros(
-            self._queue[0], tmp_results["x_step"].shape, dtype=self._DTYPE
-        )
-
+        #tmp_results["x_step"] = clarray.zeros(
+        #    self._queue[0], tmp_results["x_step"].shape, dtype=self._DTYPE
+        #)
+        
+        x = np.ones(tmp_step["x"].shape, dtype=self._DTYPE)
+        x.imag = np.ones(tmp_step["x"].shape)
+        tmp_step["x"] = clarray.to_device(self._queue[0], x)
         for i in range(0, 10):
-            print("Stepsize calc %i" % i)
-            tmp_results["step_fwd"].add_event(
+            #print("Stepsize calc %i" % i)
+            tmp_step["x_temp"].add_event(
                 self._op.fwd(
-                    tmp_results["step_fwd"],
-                    [tmp_results["x_step"], self._coils, self.modelgrad],
+                    tmp_step["x_temp"],
+                    [tmp_step["x"], self._coils, self.modelgrad],
+                    wait_for=tmp_step["x_temp"].events,
                 )
             )
-            tmp_results["x_step"].add_event(
+            tmp_step["x"].add_event(
                 self._op.adj(
-                    tmp_results["x_step"],
-                    [
-                        tmp_results["step_fwd"],
-                        self._coils,
-                        self.modelgrad,
-                        self._grad_op.ratio,
-                    ],
-                    wait_for=tmp_results["step_fwd"].events,
+                    tmp_step["x"],
+                    [tmp_step["x_temp"], self._coils, self.modelgrad, self._grad_op.ratio],
+                    wait_for=tmp_step["x_temp"].events + tmp_step["x"].events,
                 )
             )
-            tmp_results["x_step"] = clarray.to_device(
+            
+            #FIXME: NOT WORKING°!!!!!
+            
+            test = tmp_step["x"].get()
+            test = test / np.linalg.norm(test)
+            
+            tmp_step["x"] = clarray.to_device(
                 self._queue[0],
-                tmp_results["x_step"].get()
-                / np.linalg.norm(tmp_results["x_step"].get()),
-                tmp_results["x_step"].astype(self._DTYPE),
+                test,
+                #tmp_step["x"].astype(self._DTYPE),
             )
-        L = 8 * self.lambd + np.max(tmp_results["x_step"].get())
+            #self._queue.finish()
+        _, M,_ = np.linalg.svd(test)
+        L = 8 * self.lambd + np.max(M)
+        #print("L: %f" % L)
 
         # new forwad stepsize
         self.alpha = (1 - self.beta) / L
@@ -631,7 +646,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         # b = (self.omega + L / 2) / (self.c2 + L / 2)
         # self.beta = (b - 1) / (b - 0.5)
         # self.alpha = 2 * (1 - self.beta) / (2 * self.c2 - L)
-        print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
+        #print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
 
         return self.update(
             outp=step_out["x"],
