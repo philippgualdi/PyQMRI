@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Module handling the start up of the fitting procedure."""
-import sys
 import argparse
-import os
-import time
 import importlib
-
-import numpy as np
-from tkinter import filedialog
-from tkinter import Tk
-
-import matplotlib.pyplot as plt
+import os
+import sys
+import time
+from tkinter import Tk, filedialog
 
 import h5py
+import matplotlib.pyplot as plt
+import numpy as np
 import pyopencl as cl
 import pyopencl.array as clarray
 
-
 from pyqmri._helper_fun import _goldcomp as goldcomp
-from pyqmri._helper_fun._est_coils import est_coils
 from pyqmri._helper_fun import _utils as utils
-from pyqmri.solver import CGSolver
-from pyqmri.irgn import IRGNOptimizer
+from pyqmri._helper_fun._est_coils import est_coils
 from pyqmri.ipiano import IPianoOptimizer
+from pyqmri.irgn import IRGNOptimizer
+from pyqmri.solver import CGSolver
 
 
 def _choosePlatform(myargs, par):
@@ -598,7 +594,7 @@ def _start_recon(myargs):
 # Scale data norm  ############################################################
 ###############################################################################
     data, images = _estScaleNorm(myargs, par, images, data)
-    if myargs.weights is -1:
+    if myargs.weights == -1:
         par["weights"] = np.ones((par["unknowns"]), dtype=par["DTYPE_real"])
     else:
         par["weights"] = np.array(myargs.weights, dtype=par["DTYPE_real"])
@@ -611,8 +607,8 @@ def _start_recon(myargs):
 ###############################################################################
 # initialize operator  ########################################################
 ###############################################################################
-    """
-    opt = IRGNOptimizer(par,
+    if myargs.optimizer == "IPIANO":
+        opt = IPianoOptimizer(par,
                         model,
                         trafo=myargs.trafo,
                         imagespace=myargs.imagespace,
@@ -622,8 +618,8 @@ def _start_recon(myargs):
                         reg_type=myargs.reg,
                         DTYPE=par["DTYPE"],
                         DTYPE_real=par["DTYPE_real"])
-    """
-    opt = IPianoOptimizer(par,
+    else:
+        opt = IRGNOptimizer(par,
                         model,
                         trafo=myargs.trafo,
                         imagespace=myargs.imagespace,
@@ -659,7 +655,8 @@ def _str2bool(v):
     raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-def run(reg_type='TGV',
+def run(optimizer="IRGN",
+        reg_type='TGV',
         slices=1,
         trafo=True,
         streamed=False,
@@ -741,7 +738,8 @@ def run(reg_type='TGV',
       double_precision : bool, False
         Enable double precission computation.
     """
-    params = [('--recon_type', "TGV"),
+    params = [('--optimizer', "IRGN"),
+              ('--recon_type', "TGV"),
               ('--reg_type', str(reg_type)),
               ('--slices', str(slices)),
               ('--trafo', str(trafo)),
@@ -780,6 +778,9 @@ def _parseArguments(args):
         description="T1 quantification from VFA "
                     "data. By default runs 3D "
                     "regularization for TGV.")
+    argparmain.add_argument(
+      '--optimizer', dest='optimizer',
+      help='Choose reconstruction optimization')
     argparmain.add_argument(
       '--recon_type', dest='type',
       help='Choose reconstruction type (currently only 3D)')

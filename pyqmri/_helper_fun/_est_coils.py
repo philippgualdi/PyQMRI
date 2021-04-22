@@ -8,11 +8,12 @@ inversion joint estimation of coil sensitivities and image content)
 
 """
 import sys
-import numpy as np
+
 import ipyparallel as ipp
+import numpy as np
 import pyopencl.array as clarray
-from pyqmri._helper_fun import _nlinvns as nlinvns
 from pyqmri._helper_fun import _goldcomp as goldcomp
+from pyqmri._helper_fun import _nlinvns as nlinvns
 from pyqmri._helper_fun import _utils as utils
 
 
@@ -48,7 +49,6 @@ def est_coils(data, par, file, args, off):
     ###########################################################################
     # Initiate parallel interface #############################################
     ###########################################################################
-    c = ipp.Client()
     nlinvNewtonSteps = 6
     nlinvRealConstr = False
     if args.sms or "Coils_real" in list(file.keys()):
