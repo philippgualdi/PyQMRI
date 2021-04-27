@@ -307,7 +307,7 @@ class IPianoOptimizer:
             print("-" * 75)
             self._fval_old = self._fval
             self._saveToFile(ign, self._model.rescale(result)["data"])
-            self._calcResidual(result, data, ign + 1)
+            #self._calcResidual(result, data, ign + 1)
 
     def _updateIPIANORegPar(self, it):
         """Update the iPiano parameter.
@@ -432,12 +432,12 @@ class IPianoOptimizer:
             self._pdop.setFvalInit(self._fval)
 
         print("-" * 75)
-        print("Initial Cost: %f" % (self._fval_init))
-        print("Costs of Data: %f" % (datacost))
-        print("Costs of LOG: {:.3E}".format(regcost))
-        print("Costs of L2 Term: %f" % (L2Cost))
+        print("Initial Cost: {:.5E}".format(self._fval_init))
+        print("Costs of Data: {:.5E}".format(datacost))
+        print("Costs of LOG: {:.5E}".format(regcost))
+        print("Costs of L2 Term: {:.5E}".format(L2Cost))
         print("-" * 75)
-        print("Function value at iPiano-Step %i: %f" % (it, self._fval))
+        print("Function value at iPiano-Step {}: {:.5E}".format(it, self._fval))
         print("-" * 75)
         return b
 

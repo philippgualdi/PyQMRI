@@ -108,6 +108,7 @@ class IPianoBaseSolver(ABC):
         self.omega = ipiano_par["omega"]
         self.lambd = ipiano_par["lambd"]
         self.alpha = ipiano_par.get("alpha", 0.0)
+        self.alpha_max = ipiano_par.get("alpha_max", 0.0)
         self.beta = ipiano_par.get("beta", 1.0)
         # Iterations used by the solver
         self.iters = ipiano_par.get("max_iters", 10)
@@ -238,7 +239,9 @@ class IPianoBaseSolver(ABC):
         """
         self._updateConstraints()
 
-        (step_out, tmp_results, tmp_step, step_in, data) = self._setupVariables(x, data)
+        (step_out, tmp_results, step_in, data) = self._setupVariables(x, data)
+        
+        self._calcStepsize(x_shape=x.shape, data_shape=data.shape)
 
         for i in range(self.iters):
             self._preUpdate(tmp_results, step_in)
@@ -247,14 +250,12 @@ class IPianoBaseSolver(ABC):
 
             self._update_g(tmp_results, step_in)
 
-            self._calcStepsize(tmp_step)
-
             self._update(step_out, tmp_results, step_in)
 
             self._postUpdate(step_out, tmp_results, step_in)
 
             if not np.mod(i, 10):
-                print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
+                #print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
 
                 if self.display_iterations:
                     if isinstance(step_out["x"], np.ndarray):
@@ -274,7 +275,7 @@ class IPianoBaseSolver(ABC):
     def _update_g(self, tmp_results, step_in):
         ...
 
-    def _calcStepsize(self, tmp_step):
+    def _calcStepsize(self, x_shape, data_shape, iterations=50):
         ...
 
     def _update(self, step_out, tmp_results, step_in):
@@ -315,6 +316,7 @@ class IPianoBaseSolver(ABC):
           ipiano_par (dic): A dictionary containing the new parameters.
         """
         self.alpha = ipiano_par["alpha"]
+        self.alpha_max = ipiano_par["alpha_max"]
         self.beta = ipiano_par["beta"]
         self.delta = ipiano_par["delta"]
         self.omega = ipiano_par["omega"]
@@ -403,7 +405,6 @@ class IPianoSolverLog(IPianoBaseSolver):
         step_in = {}
         step_out = {}
         tmp_results = {}
-        tmp_step = {}
 
         step_in["x"] = clarray.to_device(self._queue[0], x)
         step_in["xold"] = clarray.to_device(self._queue[0], x)
@@ -411,12 +412,6 @@ class IPianoSolverLog(IPianoBaseSolver):
 
         step_out["x"] = clarray.empty_like(step_in["x"])
         
-        # Stepsize
-        x_step = np.ones(step_in["x"].shape, dtype=self._DTYPE)
-        x_step.imag = np.ones(step_in["x"].shape)
-        tmp_step["x"] = clarray.to_device(self._queue[0], x) # clarray.empty_like(step_in["x"])
-        tmp_step["x_temp"] = step_in["x"].copy() # clarray.empty_like(step_in["x"])
-
         tmp_results["gradFx"] = step_in["x"].copy()
         tmp_results["DADA"] = clarray.empty_like(step_in["x"])
         tmp_results["DAd"] = clarray.empty_like(step_in["x"])
@@ -428,7 +423,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         )
 
         tmp_results["reg"] = clarray.zeros(self._queue[0], (1,), dtype=self._DTYPE)
-        return (step_out, tmp_results, tmp_step, step_in, data)
+        return (step_out, tmp_results, step_in, data)
 
     def update_f(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
         """Forward update of the gradient f(x) function in the iPiano Algorithm.
@@ -519,39 +514,40 @@ class IPianoSolverLog(IPianoBaseSolver):
             self._grad_op.fwd(tmp_results["gradx"], step_in["x"])
         )
 
-        tmp_results["reg"] = self.lambd * (
-            clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
-            / (1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
-        )
+        temp_reg = clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
+        tmp_results["reg"] = self.lambd * (temp_reg / (1 + temp_reg))
 
-    def _calcStepsize(self, tmp_step):
+    def _calcStepsize(self, x_shape, data_shape, iterations=50):
         """Rescale the alpha step size"""
+                
+        x_temp = (np.random.randn(*(x_shape)).astype(self._DTYPE_real) + 1j*np.random.randn(*(x_shape)).astype(self._DTYPE_real))
+        x = clarray.to_device(self._queue[0], x_temp)#.astype(self._DTYPE)
         
-        x = np.ones(tmp_step["x"].shape, dtype=self._DTYPE)
-        x.imag = np.ones(tmp_step["x"].shape)
-        tmp_step["x"] = clarray.to_device(self._queue[0], x)
-        
-        for i in range(0, 10):           
-            fwd = self._op.fwdoop(
-              [tmp_step["x"], self._coils, self.modelgrad]
-            )
-            self._op.adjoop(
-                [fwd, self._coils, self.modelgrad, self._grad_op.ratio],
-            )
-            
-            test = tmp_step["x"].get()
-            test = test / np.linalg.norm(test)
-            
-            tmp_step["x"] = clarray.to_device(
-                self._queue[0],
-                test,
-            )
-            
-        _, M,_ = np.linalg.svd(test)
-        L = 100 * self.lambd + np.max(M)        
+        data_temp = (np.random.randn(*(data_shape)).astype(self._DTYPE_real) + 1j*np.random.randn(*(data_shape)).astype(self._DTYPE_real))
+        x1 = clarray.to_device(self._queue[0], data_temp)
 
-        self.alpha = (1 - self.beta) / L
+        for _ in range(iterations):           
+            self._op.fwd(
+                    out=x1, 
+                    inp=[x, self._coils, self.modelgrad],
+                    wait_for=x.events,
+                ).wait()
+            self._op.adj(
+                    x,
+                    [x1, self._coils, self.modelgrad, self._grad_op.ratio],
+                    wait_for=x1.events,
+            ).wait()
+
+            x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
+            
+            x = x / x_norm
         
+        L = 10 * self.lambd + np.abs(clarray.vdot(x, x1).get())/np.linalg.norm(x.get())**2
+        self.alpha = 2*(1 - self.beta) / L
+        self.alpha = np.minimum(
+            self.alpha,
+            self.alpha_max)
+        print("Step Size alpha: %s, beta: %s, L: %s " % (self.alpha, self.beta, L))
         
 
     def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
@@ -563,7 +559,7 @@ class IPianoSolverLog(IPianoBaseSolver):
           inp : list(PyOpenCL.Array)
             The values for calculate f
                 x       -> the actual parameters
-                x_(n-1)     -> old x
+                x_(n-1) -> old x
                 df(x)   -> regularization parameter
           par : list
             List of necessary parameters for the update
@@ -598,9 +594,6 @@ class IPianoSolverLog(IPianoBaseSolver):
         )
 
     def _update(self, step_out, tmp_results, step_in):
-
-        print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
-
         return self.update(
             outp=step_out["x"],
             inp=(step_in["x"], step_in["xold"], tmp_results["gradFx"]),

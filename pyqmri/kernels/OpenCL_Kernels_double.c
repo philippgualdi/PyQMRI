@@ -1232,3 +1232,124 @@ __kernel void operator_ad_cg(
         out[scan*NSl*X*Y+k*X*Y+y*X+x] = sum;
     }
 }
+
+
+
+
+__kernel void update_ipiano_log_grad_f(
+    __global double2 *f,
+    __global double2 *AA,
+    __global double2 *Ad,
+    __global double2 *x_in,
+    __global double2 *x_k,
+    __global double2 *reg,
+    const double dalta,
+    const double lambd,
+    __global double *min,
+    __global double *max,
+    __global int *real, const int NUk)
+{
+    size_t Nx = get_global_size(2), Ny = get_global_size(1);
+    size_t NSl = get_global_size(0);
+    size_t x = get_global_id(2), y = get_global_id(1);
+    size_t k = get_global_id(0);
+    size_t i = k * Nx * Ny + Nx * y + x;
+    float norm = 0;
+    int idx, idx2, idx3, idx4, idx5;
+    float2 tmp;
+
+    for (int uk = 0; uk < NUk; uk++)
+    {
+        f[i] = (AA[i] - Ad[i] + dalta * (x_in[i] - x_k[i]) + lambd * reg[uk]);
+
+        if (real[uk] > 1)
+        {
+            f[i].s1 = 0.0f;
+            if (f[i].s0 < min[uk])
+            {
+                f[i].s0 = min[uk];
+            }
+            if (f[i].s0 > max[uk])
+            {
+                f[i].s0 = max[uk];
+            }
+        }
+        else
+        {
+            norm = sqrt(
+                pow(
+                    (float)(f[i].s0), (float)(2.0)) +
+                pow((float)(f[i].s1), (float)(2.0)));
+            if (norm < min[uk])
+            {
+                f[i].s0 *= 1 / norm * min[uk];
+                f[i].s1 *= 1 / norm * min[uk];
+            }
+            if (norm > max[uk])
+            {
+                f[i].s0 *= 1 / norm * max[uk];
+                f[i].s1 *= 1 / norm * max[uk];
+            }
+        }
+
+        i += NSl * Nx * Ny;
+    }
+}
+
+__kernel void update_ipiano_log_fwd(
+    __global double2 *x_new,
+    __global double2 *x_in,
+    __global double2 *x_old,
+    __global double2 *Kyk,
+    const double alpha,
+    const double beta,
+    __global double *min,
+    __global double *max,
+    __global int *real, const int NUk)
+{
+    size_t Nx = get_global_size(2), Ny = get_global_size(1);
+    size_t NSl = get_global_size(0);
+    size_t x = get_global_id(2), y = get_global_id(1);
+    size_t k = get_global_id(0);
+    size_t i = k * Nx * Ny + Nx * y + x;
+    float norm = 0;
+    int idx, idx2, idx3, idx4, idx5;
+    float2 tmp;
+
+    for (int uk = 0; uk < NUk; uk++)
+    {
+        x_new[i] = (x_in[i] - alpha * Kyk[i] + beta * (x_in[i] - x_old[i]));
+
+        if (real[uk] > 1)
+        {
+            x_new[i].s1 = 0.0f;
+            if (x_new[i].s0 < min[uk])
+            {
+                x_new[i].s0 = min[uk];
+            }
+            if (x_new[i].s0 > max[uk])
+            {
+                x_new[i].s0 = max[uk];
+            }
+        }
+        else
+        {
+            norm = sqrt(
+                pow(
+                    (float)(x_new[i].s0), (float)(2.0)) +
+                pow((float)(x_new[i].s1), (float)(2.0)));
+            if (norm < min[uk])
+            {
+                x_new[i].s0 *= 1 / norm * min[uk];
+                x_new[i].s1 *= 1 / norm * min[uk];
+            }
+            if (norm > max[uk])
+            {
+                x_new[i].s0 *= 1 / norm * max[uk];
+                x_new[i].s1 *= 1 / norm * max[uk];
+            }
+        }
+
+        i += NSl * Nx * Ny;
+    }
+}
