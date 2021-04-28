@@ -738,7 +738,7 @@ def run(optimizer="IRGN",
       double_precision : bool, False
         Enable double precission computation.
     """
-    params = [('--optimizer', "IRGN"),
+    params = [('--optimizer', str(optimizer)),
               ('--recon_type', "TGV"),
               ('--reg_type', str(reg_type)),
               ('--slices', str(slices)),

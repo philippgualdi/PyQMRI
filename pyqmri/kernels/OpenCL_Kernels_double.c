@@ -1260,37 +1260,7 @@ __kernel void update_ipiano_log_grad_f(
 
     for (int uk = 0; uk < NUk; uk++)
     {
-        f[i] = (AA[i] - Ad[i] + dalta * (x_in[i] - x_k[i]) + lambd * reg[uk]);
-
-        if (real[uk] > 1)
-        {
-            f[i].s1 = 0.0f;
-            if (f[i].s0 < min[uk])
-            {
-                f[i].s0 = min[uk];
-            }
-            if (f[i].s0 > max[uk])
-            {
-                f[i].s0 = max[uk];
-            }
-        }
-        else
-        {
-            norm = sqrt(
-                pow(
-                    (float)(f[i].s0), (float)(2.0)) +
-                pow((float)(f[i].s1), (float)(2.0)));
-            if (norm < min[uk])
-            {
-                f[i].s0 *= 1 / norm * min[uk];
-                f[i].s1 *= 1 / norm * min[uk];
-            }
-            if (norm > max[uk])
-            {
-                f[i].s0 *= 1 / norm * max[uk];
-                f[i].s1 *= 1 / norm * max[uk];
-            }
-        }
+        f[i] = ((AA[i] - Ad[i]) + dalta * (x_in[i] - x_k[i]) + reg[i]);
 
         i += NSl * Nx * Ny;
     }

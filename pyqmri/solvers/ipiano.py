@@ -248,7 +248,7 @@ class IPianoBaseSolver(ABC):
 
             self._update_f(tmp_results, step_in)
 
-            self._update_g(tmp_results, step_in)
+            #self._update_g(tmp_results, step_in)
 
             self._update(step_out, tmp_results, step_in)
 
@@ -321,7 +321,7 @@ class IPianoBaseSolver(ABC):
         self.delta = ipiano_par["delta"]
         self.omega = ipiano_par["omega"]
         self.lambd = ipiano_par["lambd"]
-
+        print("delta: %s, lambd %s" % (self.delta, self.lambd))
 
     def setFvalInit(self, fval):
         """Set the initial value of the cost function.
@@ -410,14 +410,15 @@ class IPianoSolverLog(IPianoBaseSolver):
         step_in["xold"] = clarray.to_device(self._queue[0], x)
         step_in["xk"] = step_in["x"].copy()
 
-        step_out["x"] = clarray.empty_like(step_in["x"])
+        step_out["x"] = clarray.zeros_like(step_in["x"])
         
         tmp_results["gradFx"] = step_in["x"].copy()
-        tmp_results["DADA"] = clarray.empty_like(step_in["x"])
-        tmp_results["DAd"] = clarray.empty_like(step_in["x"])
+        tmp_results["DADA"] = clarray.zeros_like(step_in["x"])
+        tmp_results["DAd"] = clarray.zeros_like(step_in["x"])
         tmp_results["d"] = data.copy()
-        tmp_results["Ax"] = clarray.empty_like(data)
+        tmp_results["Ax"] = clarray.zeros_like(data)
 
+        tmp_results["temp_reg"] = clarray.zeros_like(step_in["x"])
         tmp_results["gradx"] = clarray.zeros(
             self._queue[0], step_in["x"].shape + (4,), dtype=self._DTYPE
         )
@@ -503,6 +504,7 @@ class IPianoSolverLog(IPianoBaseSolver):
                 wait_for=tmp_results["Ax"].events,
             )
         )
+        # Ändert sich net jedesmal vor for
         tmp_results["DAd"].add_event(
             self._op.adj(
                 tmp_results["DAd"],
@@ -514,39 +516,51 @@ class IPianoSolverLog(IPianoBaseSolver):
             self._grad_op.fwd(tmp_results["gradx"], step_in["x"])
         )
 
-        temp_reg = clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
-        tmp_results["reg"] = self.lambd * (temp_reg / (1 + temp_reg))
+        #temp_reg = clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
+        tmp_results["temp_reg"].add_event(
+          self._grad_op.adj(tmp_results["temp_reg"], tmp_results["gradx"])
+        )
+        grad_x = tmp_results["gradx"].get()
+        grad_x = np.linalg.norm(grad_x, axis=-1)**2
+        grad_x = clarray.to_device(self._queue[0], grad_x)
+        tmp_results["reg"] = - self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
 
     def _calcStepsize(self, x_shape, data_shape, iterations=50):
         """Rescale the alpha step size"""
                 
         x_temp = (np.random.randn(*(x_shape)).astype(self._DTYPE_real) + 1j*np.random.randn(*(x_shape)).astype(self._DTYPE_real))
         x = clarray.to_device(self._queue[0], x_temp)#.astype(self._DTYPE)
-        
+        x_old = clarray.to_device(self._queue[0], x_temp)
         data_temp = (np.random.randn(*(data_shape)).astype(self._DTYPE_real) + 1j*np.random.randn(*(data_shape)).astype(self._DTYPE_real))
         x1 = clarray.to_device(self._queue[0], data_temp)
-
-        for _ in range(iterations):           
+        L = 0
+        for _ in range(iterations):
+            
+            x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
+            x = x / x_norm
+            
+            x_old = x
             self._op.fwd(
                     out=x1, 
-                    inp=[x, self._coils, self.modelgrad],
+                    inp=[x_old, self._coils, self.modelgrad],
                     wait_for=x.events,
                 ).wait()
             self._op.adj(
                     x,
-                    [x1, self._coils, self.modelgrad, self._grad_op.ratio],
+                    [x1, self._coils, self.modelgrad],
                     wait_for=x1.events,
             ).wait()
 
-            x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
-            
-            x = x / x_norm
+        # Norm forward operator, Norm Gradient,
+        L = np.maximum(L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1/self.delta)
         
-        L = 10 * self.lambd + np.abs(clarray.vdot(x, x1).get())/np.linalg.norm(x.get())**2
+
+        
+        L = self._DTYPE_real(L)
         self.alpha = 2*(1 - self.beta) / L
-        self.alpha = np.minimum(
-            self.alpha,
-            self.alpha_max)
+        #self.alpha = np.minimum(
+        #    self.alpha,
+        #    self.alpha_max)
         print("Step Size alpha: %s, beta: %s, L: %s " % (self.alpha, self.beta, L))
         
 
@@ -618,3 +632,4 @@ class IPianoSolverLog(IPianoBaseSolver):
         # TODO: g_new equal to g(x)
         g_new = 0
         return f_new.get(), g_new
+      

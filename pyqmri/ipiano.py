@@ -267,9 +267,6 @@ class IPianoOptimizer:
         self._omega = self.ipiano_par["omega"]
 
         result = np.copy(self._model.guess)
-
-        # Iterations used by the solver
-        #iters = self.ipiano_par["start_iters"]
         
         self._step_val = np.nan_to_num(self._model.execute_forward(result))
 
@@ -284,13 +281,13 @@ class IPianoOptimizer:
             self._balanceModelGradients(result)
             self._step_val = np.nan_to_num(self._model.execute_forward(result))
 
-            _jacobi = np.sum(np.abs(self._modelgrad) ** 2, 1).astype(self._DTYPE_real)
-            _jacobi[_jacobi == 0] = 1e-8
+            #_jacobi = np.sum(np.abs(self._modelgrad) ** 2, 1).astype(self._DTYPE_real)
+            #_jacobi[_jacobi == 0] = 1e-8
 
             self._modelgrad = clarray.to_device(self._queue[0], self._modelgrad)
 
             self._pdop.modelgrad = self._modelgrad
-            self._pdop.jacobi = clarray.to_device(self._queue[0], _jacobi)
+            #self._pdop.jacobi = clarray.to_device(self._queue[0], _jacobi)
 
             self._updateIPIANORegPar(ign)
             self._pdop.updateRegPar(self.ipiano_par)
@@ -390,7 +387,7 @@ class IPianoOptimizer:
         """
         b = self._calcResidual(result, data, it)
 
-        tmpx = clarray.to_device(self._queue[0],result)
+        tmpx = clarray.to_device(self._queue[0], result)
         # b = FCAx|xk
         # tt = FC dA/dx|xk
         tt = self._MRI_operator.fwdoop([tmpx, self._coils, self._modelgrad]).get()
