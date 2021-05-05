@@ -279,16 +279,12 @@ class IPianoBaseSolver(ABC):
                     else:
                         self.model.plot_unknowns(step_out["x"].get())
 
-        self._calcResidual(step_out, tmp_results, step_in, data)
         return step_out
 
     def _preUpdate(self, tmp_results, step_in):
         ...
 
     def _update_f(self, tmp_results, step_in):
-        ...
-
-    def _update_g(self, tmp_results, step_in):
         ...
 
     def _calcStepsize(self, x_shape, data_shape, iterations=50):
@@ -332,7 +328,6 @@ class IPianoBaseSolver(ABC):
           ipiano_par (dic): A dictionary containing the new parameters.
         """
         self.alpha = ipiano_par["alpha"]
-        self.alpha_max = ipiano_par["alpha_max"]
         self.beta = ipiano_par["beta"]
         self.delta = ipiano_par["delta"]
         self.omega = ipiano_par["omega"]
@@ -513,10 +508,7 @@ class IPianoSolverLog(IPianoBaseSolver):
             )
         )
 
-    def _update_g(self, tmp_results, step_in):
-        pass
-
-    def _preUpdate(self, tmp_results, step_in):
+    def _preUpdate(self, tmp_results, step_in, i):
         tmp_results["Ax"].add_event(
             self._op.fwd(tmp_results["Ax"], [step_in["x"], self._coils, self.modelgrad])
         )
@@ -568,12 +560,16 @@ class IPianoSolverLog(IPianoBaseSolver):
             )
 
     def _calcStepsize(self, x_shape, data_shape, iterations=50):
-        """Rescale the alpha step size"""
+        """Rescale the step size"""
                 
-        x_temp = (np.random.randn(*(x_shape)).astype(self._DTYPE_real) + 1j*np.random.randn(*(x_shape)).astype(self._DTYPE_real))
-        x = clarray.to_device(self._queue[0], x_temp)#.astype(self._DTYPE)
+        x_temp = np.random.randn(*(x_shape)).astype(
+            self._DTYPE_real
+        ) + 1j * np.random.randn(*(x_shape)).astype(self._DTYPE_real)
+        x = clarray.to_device(self._queue[0], x_temp)
         x_old = clarray.to_device(self._queue[0], x_temp)
-        data_temp = (np.random.randn(*(data_shape)).astype(self._DTYPE_real) + 1j*np.random.randn(*(data_shape)).astype(self._DTYPE_real))
+        data_temp = np.random.randn(*(data_shape)).astype(
+            self._DTYPE_real
+        ) + 1j * np.random.randn(*(data_shape)).astype(self._DTYPE_real)
         x1 = clarray.to_device(self._queue[0], data_temp)
         L = 0
         for _ in range(iterations):
@@ -594,18 +590,14 @@ class IPianoSolverLog(IPianoBaseSolver):
             ).wait()
 
         # Norm forward operator, Norm Gradient,
-        L = np.maximum(L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1/self.delta)
-        
-
+        L = np.maximum(
+            L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1 / self.delta
+        )
         
         L = self._DTYPE_real(L)
-        self.alpha = 2*(1 - self.beta) / L
-        #self.alpha = np.minimum(
-        #    self.alpha,
-        #    self.alpha_max)
+        self.alpha = 2 * (1 - self.beta) / L
         print("Step Size alpha: %s, beta: %s, L: %s " % (self.alpha, self.beta, L))
         
-
     def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
         """Forward update of the x values in the iPiano Algorithm.
         Parameters
