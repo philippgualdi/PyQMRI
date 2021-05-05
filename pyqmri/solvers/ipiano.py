@@ -10,6 +10,7 @@ from abc import ABC
 import numpy as np
 import pyopencl.array as clarray
 import pyopencl.clmath as clmath
+import pyopencl.elementwise as elwis
 
 
 class IPianoBaseSolver(ABC):
@@ -138,6 +139,23 @@ class IPianoBaseSolver(ABC):
             par["dimX"],
         )
 
+        var_size = "float"
+        if self._DTYPE_real == np.float64:
+            var_size = "double"
+
+        self.normkernl = elwis.ElementwiseKernel(
+            context=par["ctx"][0],
+            arguments="float *out, {}2 *x".format(var_size, var_size),
+            operation="out[i]=x[i].s0*x[i].s0+x[i].s1*x[i].s1",
+            name="norm_kernel",
+        )
+        self.abskernl = elwis.ElementwiseKernel(
+            context=par["ctx"][0],
+            arguments="float *out, {}2 *x".format(var_size, var_size),
+            operation="out[i]=x[i].s0+x[i].s1",
+            name="abs_kernel",
+        )
+
     @staticmethod
     def factory(
         prg,
@@ -244,18 +262,16 @@ class IPianoBaseSolver(ABC):
         self._calcStepsize(x_shape=x.shape, data_shape=data.shape)
 
         for i in range(self.iters):
-            self._preUpdate(tmp_results, step_in)
+            self._preUpdate(tmp_results, step_in, i)
 
             self._update_f(tmp_results, step_in)
-
-            #self._update_g(tmp_results, step_in)
 
             self._update(step_out, tmp_results, step_in)
 
             self._postUpdate(step_out, tmp_results, step_in)
 
             if not np.mod(i, 10):
-                #print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
+                # print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
 
                 if self.display_iterations:
                     if isinstance(step_out["x"], np.ndarray):
@@ -423,7 +439,14 @@ class IPianoSolverLog(IPianoBaseSolver):
             self._queue[0], step_in["x"].shape + (4,), dtype=self._DTYPE
         )
 
-        tmp_results["reg"] = clarray.zeros(self._queue[0], (1,), dtype=self._DTYPE)
+        tmp_results["reg_norm"] = clarray.zeros(
+            self._queue[0],
+            step_in["x"].shape + (2,),
+            dtype=self._DTYPE_real,
+        )
+        tmp_results["reg"] = clarray.zeros(
+            self._queue[0], step_in["x"].shape, dtype=self._DTYPE_real
+        )
         return (step_out, tmp_results, step_in, data)
 
     def update_f(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
@@ -516,14 +539,33 @@ class IPianoSolverLog(IPianoBaseSolver):
             self._grad_op.fwd(tmp_results["gradx"], step_in["x"])
         )
 
-        #temp_reg = clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
         tmp_results["temp_reg"].add_event(
           self._grad_op.adj(tmp_results["temp_reg"], tmp_results["gradx"])
         )
+
+        # Calc GPU
+        self.normkernl(tmp_results["reg_norm"], tmp_results["gradx"])
+        self.abskernl(tmp_results["reg"],  tmp_results["reg_norm"])
+        tmp_results["reg"] = -self.lambd * (tmp_results["temp_reg"] / (1 + tmp_results["reg"]))
+
+        if not np.mod(i, 100):
+            # Test CPU
         grad_x = tmp_results["gradx"].get()
-        grad_x = np.linalg.norm(grad_x, axis=-1)**2
+            grad_x = np.linalg.norm(grad_x, axis=-1) ** 2
+
         grad_x = clarray.to_device(self._queue[0], grad_x)
-        tmp_results["reg"] = - self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
+
+            # Calc
+            test_result = -self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
+
+            reg_test = np.sum(np.abs(tmp_results["reg"].get()))
+            test_test = np.sum(np.abs(test_result.get()))
+            diff_test = np.sum(np.abs(tmp_results["reg"].get() - test_result.get()))
+            print(
+                "Reg: {:.9E} , Test {:.9E}, Diff: {:.9E}".format(
+                    reg_test, test_test, diff_test
+                )
+            )
 
     def _calcStepsize(self, x_shape, data_shape, iterations=50):
         """Rescale the alpha step size"""
