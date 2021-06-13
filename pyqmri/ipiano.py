@@ -65,7 +65,7 @@ class IPianoOptimizer:
         Complex working precission.
       DTYPE_real : numpy.dtype, numpy.float32
         Real working precission.
-    
+
     Attributes
     ----------
       par : dict
@@ -80,8 +80,9 @@ class IPianoOptimizer:
         appends its value to the list.
       irgn_par : dict
         The parameters read from the config file to guide the IRGN
-        optimization process    
+        optimization process
     """
+
     def __init__(
         self,
         par,
@@ -115,11 +116,10 @@ class IPianoOptimizer:
         self._streamed = streamed
         self._imagespace = imagespace
         self._SMS = SMS
-        
+
         if streamed or SMS == 1:
             raise NotImplementedError("Not implemented")
-        
-        
+
         if streamed and par["NSlice"] / (num_dev * par["par_slices"]) < 2:
             raise ValueError(
                 "Number of Slices devided by parallel "
@@ -227,21 +227,18 @@ class IPianoOptimizer:
             DTYPE=DTYPE,
             DTYPE_real=DTYPE_real,
         )
-        
+
         self._delta = None
         self._step_val = None
         self._modelgrad = None
-        
+
         # Possible delete
         self._gamma = None
         self._omega = None
-        
 
     def _setupLinearOps(self, DTYPE, DTYPE_real):
-        """Setup the Gradient Operator.
-        
-        """
-        
+        """Setup the Gradient Operator."""
+
         grad_op = operator.Operator.GradientOperatorFactory(
             self.par, self._prg, DTYPE, DTYPE_real, self._streamed
         )
@@ -257,17 +254,17 @@ class IPianoOptimizer:
         ----------
               data : numpy.array
                 the data to perform optimization/fitting on.
-        
+
         """
-        
+
         self._delta = self.ipiano_par["delta"]
-        
+
         # Todo: remove
         self._gamma = self.ipiano_par["gamma"]
         self._omega = self.ipiano_par["omega"]
 
         result = np.copy(self._model.guess)
-        
+
         self._step_val = np.nan_to_num(self._model.execute_forward(result))
 
         self._pdop.model = self._model
@@ -281,13 +278,9 @@ class IPianoOptimizer:
             self._balanceModelGradients(result)
             self._step_val = np.nan_to_num(self._model.execute_forward(result))
 
-            #_jacobi = np.sum(np.abs(self._modelgrad) ** 2, 1).astype(self._DTYPE_real)
-            #_jacobi[_jacobi == 0] = 1e-8
-
             self._modelgrad = clarray.to_device(self._queue[0], self._modelgrad)
 
             self._pdop.modelgrad = self._modelgrad
-            #self._pdop.jacobi = clarray.to_device(self._queue[0], _jacobi)
 
             self._updateIPIANORegPar(ign)
             self._pdop.updateRegPar(self.ipiano_par)
@@ -304,7 +297,7 @@ class IPianoOptimizer:
             print("-" * 75)
             self._fval_old = self._fval
             self._saveToFile(ign, self._model.rescale(result)["data"])
-            #self._calcResidual(result, data, ign + 1)
+            # self._calcResidual(result, data, ign + 1)
 
     def _updateIPIANORegPar(self, it):
         """Update the iPiano parameter.
@@ -372,8 +365,7 @@ class IPianoOptimizer:
     # New .hdf5 save files ########################################################
     ###############################################################################
     def _saveToFile(self, myit, result):
-        """TODO: doc string
-        """
+        """TODO: doc string"""
         f = h5py.File(self.par["outdir"] + "output_" + self.par["fname"], "a")
         f.create_dataset(
             "ipiano_result_" + str(myit), result.shape, dtype=self._DTYPE, data=result
@@ -381,10 +373,8 @@ class IPianoOptimizer:
         f.attrs["res_ipiano_iter_" + str(myit)] = self._fval
         f.close()
 
-
     def _ipianoSolve3D(self, result, data, it):
-        """ TODO: doc string
-        """
+        """TODO: doc string"""
         b = self._calcResidual(result, data, it)
 
         tmpx = clarray.to_device(self._queue[0], result)
@@ -405,8 +395,7 @@ class IPianoOptimizer:
         return x
 
     def _calcResidual(self, x, data, it):
-        """TODO: doc string
-        """
+        """TODO: doc string"""
         b, grad = self._calcFwdGNPartLinear(x)
         grad_reg = grad[: self.par["unknowns_TGV"]]
         grad_H1 = grad[self.par["unknowns_TGV"] :]
@@ -414,7 +403,9 @@ class IPianoOptimizer:
 
         datacost = 2 * np.linalg.norm(data - b) ** 2
         L2Cost = np.linalg.norm(x) / (2.0 * self.ipiano_par["delta"])
-        regcost = self.ipiano_par["lambd"] * np.sum(np.abs(np.log(1 + np.vdot(grad_reg, grad_reg))))
+        regcost = self.ipiano_par["lambd"] * np.sum(
+            np.abs(np.log(1 + np.vdot(grad_reg, grad_reg)))
+        )
 
         self._fval = (
             datacost
@@ -439,8 +430,7 @@ class IPianoOptimizer:
         return b
 
     def _calcFwdGNPartLinear(self, x):
-        """TODO: doc string
-        """
+        """TODO: doc string"""
         if self._imagespace is False:
             b = clarray.empty(self._queue[0], self._data_shape, dtype=self._DTYPE)
             self._FT.FFT(

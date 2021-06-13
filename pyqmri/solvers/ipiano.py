@@ -5,6 +5,7 @@
 # PyQMRI is a free software; you can redistribute it and/or modify it
 # under the terms of the Apache-2.0 License.
 
+import sys
 from abc import ABC
 
 import numpy as np
@@ -258,7 +259,7 @@ class IPianoBaseSolver(ABC):
         self._updateConstraints()
 
         (step_out, tmp_results, step_in, data) = self._setupVariables(x, data)
-        
+
         self._calcStepsize(x_shape=x.shape, data_shape=data.shape)
 
         for i in range(self.iters):
@@ -278,6 +279,12 @@ class IPianoBaseSolver(ABC):
                         self.model.plot_unknowns(step_out["x"])
                     else:
                         self.model.plot_unknowns(step_out["x"].get())
+                cost, f_new = self._calcResidual(step_out, tmp_results, step_in, data)
+                sys.stdout.write(
+                    "Iteration: %04d ---- \u03B1  %2.2e  \u2207 f: %2.8e, \r"
+                    % (i, self.alpha, cost)
+                )
+            sys.stdout.flush()
 
         return step_out
 
@@ -422,7 +429,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         step_in["xk"] = step_in["x"].copy()
 
         step_out["x"] = clarray.zeros_like(step_in["x"])
-        
+
         tmp_results["gradFx"] = step_in["x"].copy()
         tmp_results["DADA"] = clarray.zeros_like(step_in["x"])
         tmp_results["DAd"] = clarray.zeros_like(step_in["x"])
@@ -532,7 +539,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         )
 
         tmp_results["temp_reg"].add_event(
-          self._grad_op.adj(tmp_results["temp_reg"], tmp_results["gradx"])
+            self._grad_op.adj(tmp_results["temp_reg"], tmp_results["gradx"])
         )
 
         # Calc GPU
@@ -542,10 +549,10 @@ class IPianoSolverLog(IPianoBaseSolver):
 
         if not np.mod(i, 100):
             # Test CPU
-        grad_x = tmp_results["gradx"].get()
+            grad_x = tmp_results["gradx"].get()
             grad_x = np.linalg.norm(grad_x, axis=-1) ** 2
 
-        grad_x = clarray.to_device(self._queue[0], grad_x)
+            grad_x = clarray.to_device(self._queue[0], grad_x)
 
             # Calc
             test_result = -self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
@@ -561,7 +568,7 @@ class IPianoSolverLog(IPianoBaseSolver):
 
     def _calcStepsize(self, x_shape, data_shape, iterations=50):
         """Rescale the step size"""
-                
+
         x_temp = np.random.randn(*(x_shape)).astype(
             self._DTYPE_real
         ) + 1j * np.random.randn(*(x_shape)).astype(self._DTYPE_real)
@@ -573,31 +580,31 @@ class IPianoSolverLog(IPianoBaseSolver):
         x1 = clarray.to_device(self._queue[0], data_temp)
         L = 0
         for _ in range(iterations):
-            
+
             x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
             x = x / x_norm
-            
+
             x_old = x
             self._op.fwd(
-                    out=x1, 
-                    inp=[x_old, self._coils, self.modelgrad],
-                    wait_for=x.events,
-                ).wait()
+                out=x1,
+                inp=[x_old, self._coils, self.modelgrad],
+                wait_for=x.events,
+            ).wait()
             self._op.adj(
-                    x,
-                    [x1, self._coils, self.modelgrad],
-                    wait_for=x1.events,
+                x,
+                [x1, self._coils, self.modelgrad],
+                wait_for=x1.events,
             ).wait()
 
         # Norm forward operator, Norm Gradient,
         L = np.maximum(
             L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1 / self.delta
         )
-        
+
         L = self._DTYPE_real(L)
         self.alpha = 2 * (1 - self.beta) / L
         print("Step Size alpha: %s, beta: %s, L: %s " % (self.alpha, self.beta, L))
-        
+
     def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
         """Forward update of the x values in the iPiano Algorithm.
         Parameters
@@ -655,15 +662,20 @@ class IPianoSolverLog(IPianoBaseSolver):
 
     def _calcResidual(self, step_out, tmp_results, step_in, data):
 
-        # TODO: step_new equal to f(x)
         f_new = clarray.vdot(tmp_results["DADA"], tmp_results["DAd"]) + clarray.sum(
             self.lambd
-            * clmath.log(
-                1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])
-            )
+            * clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
         )
-
-        # TODO: g_new equal to g(x)
-        g_new = 0
-        return f_new.get(), g_new
-      
+        
+        datacost = 0 # self._fval_init
+        # self._FT.FFT(b, clarray.to_device(
+        #       self._queue[0], (self._step_val[:, None, ...] *
+        #          self.par["C"]))).wait()
+        # b = b.get()
+        #datacost = 2 * np.linalg.norm(data - b) ** 2
+        L2Cost = np.linalg.norm(step_out["x"].get()) / (2.0 * self.delta)
+        regcost = self.lambd * np.sum(
+            np.abs(clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])).get())
+        )
+        costs = datacost + L2Cost + regcost
+        return costs, f_new.get()

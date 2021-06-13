@@ -9,12 +9,13 @@ Attribues:
     Real working precission. Currently single precission only.
 """
 from __future__ import division
-import time
-import numpy as np
 
-from pkg_resources import resource_filename
-import pyopencl.array as clarray
+import time
+
 import h5py
+import numpy as np
+import pyopencl.array as clarray
+from pkg_resources import resource_filename
 
 import pyqmri.operator as operator
 import pyqmri.solver as optimizer
