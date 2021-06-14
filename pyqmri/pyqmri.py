@@ -19,13 +19,16 @@ from pyqmri._helper_fun import _utils as utils
 from pyqmri._helper_fun._est_coils import est_coils
 from pyqmri.ipiano import IPianoOptimizer
 from pyqmri.irgn import IRGNOptimizer
-from pyqmri.solver import CGSolver
+
+np.seterr(divide='ignore', invalid='ignore')
+
+np.seterr(divide='ignore')
 
 
 def _choosePlatform(myargs, par):
     platforms = cl.get_platforms()
     use_GPU = False
-    par["Platform_Indx"] = 0
+    par["Platform_Indx"] = None
     if myargs.use_GPU:
         for j, platfrom in enumerate(platforms):
             if platfrom.get_devices(device_type=cl.device_type.GPU):
@@ -46,10 +49,13 @@ def _choosePlatform(myargs, par):
                       "with %i device(s) and OpenCL-version <%s>"
                       % (str(platfrom.get_info(cl.platform_info.NAME)),
                          len(platfrom.get_devices(
-                             device_type=cl.device_type.GPU)),
+                             device_type=cl.device_type.CPU)),
                          str(platfrom.get_info(cl.platform_info.VERSION))))
                 use_GPU = False
                 par["Platform_Indx"] = j
+        if not par["Platform_Indx"]:
+            raise(ValueError("No OpenCL CPU device found."))
+    par["use_GPU"] = use_GPU
     return platforms
 
 
@@ -103,6 +109,10 @@ def _setupOCL(myargs, par):
     platforms = _choosePlatform(myargs, par)
     par["ctx"] = []
     par["queue"] = []
+    if par["use_GPU"]:
+        queue_par = cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE
+    else:
+        queue_par = None
     if isinstance(myargs.devices, int):
         myargs.devices = [myargs.devices]
     if myargs.streamed:
@@ -127,8 +137,7 @@ def _setupOCL(myargs, par):
                 cl.CommandQueue(
                    tmpxtx,
                    platforms[par["Platform_Indx"]].get_devices()[device],
-                   properties=(
-                     cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
+                   properties=queue_par
                    )
                 )
 
@@ -304,13 +313,15 @@ def _readInput(myargs, par):
             sys.exit()
         file = myargs.file
     name = os.path.normpath(file)
-    par["fname"] = name.split(os.sep)[-1]
+    par["fname"] = name.split(os.sep)[-1].split(".")[0]
 
     if myargs.outdir == '':
         outdir = os.sep.join(name.split(os.sep)[:-1]) + os.sep + \
             "PyQMRI_out" + \
             os.sep + myargs.sig_model + os.sep + \
             time.strftime("%Y-%m-%d  %H-%M-%S") + os.sep
+        if not os.sep.join(name.split(os.sep)[:-1]):
+            outdir = '.'+outdir
     else:
         outdir = myargs.outdir + os.sep + "PyQMRI_out" + \
             os.sep + myargs.sig_model + os.sep + par["fname"] + os.sep + \
@@ -465,7 +476,7 @@ def _populate_par_w_sequencepar(par,
         par["par_slices"] = par_slices
         par["overlap"] = 1
     else:
-        par["par_slices"] = datashape[2]
+        par["par_slices"] = par["NSlice"]
         par["overlap"] = 0
     par["transpXY"] = False
 
@@ -594,7 +605,8 @@ def _start_recon(myargs):
 # Scale data norm  ############################################################
 ###############################################################################
     data, images = _estScaleNorm(myargs, par, images, data)
-    if myargs.weights == -1:
+
+    if np.allclose(myargs.weights, -1):
         par["weights"] = np.ones((par["unknowns"]), dtype=par["DTYPE_real"])
     else:
         par["weights"] = np.array(myargs.weights, dtype=par["DTYPE_real"])
@@ -630,7 +642,7 @@ def _start_recon(myargs):
                         DTYPE=par["DTYPE"],
                         DTYPE_real=par["DTYPE_real"])
     
-    f = h5py.File(par["outdir"]+"output_" + par["fname"], "a")
+    f = h5py.File(par["outdir"]+"output_" + par["fname"]+".h5", "a")
     f.create_dataset("images_ifft", data=images)
     f.attrs['data_norm'] = par["dscale"]
     f.close()
@@ -749,7 +761,7 @@ def run(optimizer="IRGN",
               ('--config', str(config)),
               ('--imagespace', str(imagespace)),
               ('--sms', str(sms)),
-              ('--OCL_GPU', "True"),
+              ('--use_GPU', "True"),
               ('--devices', str(devices)),
               ('--dz', str(dz)),
               ('--weights', str(weights)),
@@ -757,7 +769,7 @@ def run(optimizer="IRGN",
               ('--model', str(model)),
               ('--modelfile', str(modelfile)),
               ('--modelname', str(modelname)),
-              ('--outdir', str(out)),
+              ('--out', str(out)),
               ('--double_precision', str(double_precision))
               ]
 
@@ -818,7 +830,7 @@ def _parseArguments(args):
       '--sms', dest='sms', type=_str2bool,
       help="Switch to SMS reconstruction")
     argparmain.add_argument(
-      '--OCL_GPU', dest='use_GPU', type=_str2bool,
+      '--use_GPU', dest='use_GPU', type=_str2bool,
       help="Select if CPU or GPU should be used as OpenCL platform. "
            "Defaults to GPU (1). CAVE: CPU FFT not working")
     argparmain.add_argument(
@@ -851,9 +863,6 @@ def _parseArguments(args):
     argparmain.add_argument(
       '--modelname', dest='modelname', type=str,
       help="Name of the model to use.")
-    argparmain.add_argument('--outdir', dest='outdir', type=str,
-                            help="The path to the output directory. Defaults "
-                            "to the location of the input.")
     argparmain.add_argument(
       '--double_precision', dest='double_precision', type=_str2bool,
       help="Switch between single (False, default) and double "

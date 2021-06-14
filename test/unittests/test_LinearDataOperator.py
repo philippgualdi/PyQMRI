@@ -7,6 +7,8 @@ Created on Mon Aug 12 11:26:41 2019
 """
 
 import pyqmri
+import os
+from os.path import join as pjoin
 try:
     import unittest2 as unittest
 except ImportError:
@@ -19,9 +21,11 @@ import numpy as np
 import h5py
 
 
-DTYPE = np.complex128
-DTYPE_real = np.float64
-
+DTYPE = np.complex64
+DTYPE_real = np.float32
+RTOL=1e-3
+ATOL=1e-5
+data_dir = os.path.realpath(pjoin(os.path.dirname(__file__), '..'))
 
 def setupPar(par):
     par["NScan"] = 10
@@ -37,7 +41,7 @@ def setupPar(par):
     par["dz"] = 1
     par["weights"] = np.array([1, 1])
     par["overlap"] = 1
-    file = h5py.File('./test/smalltest.h5', 'r')
+    file = h5py.File(pjoin(data_dir, 'smalltest.h5'), 'r')
 
     par["traj"] = file['real_traj'][()].astype(DTYPE) + \
         1j*file['imag_traj'][()].astype(DTYPE)
@@ -84,24 +88,24 @@ class OperatorKspaceRadial(unittest.TestCase):
             DTYPE_real=DTYPE_real)
 
         self.opinfwd = np.random.randn(par["unknowns"], par["NSlice"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["unknowns"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
         self.opinadj = np.random.randn(par["NScan"], par["NC"], par["NSlice"],
-                                       par["Nproj"], par["N"]) +\
+                                        par["Nproj"], par["N"]) +\
             1j * np.random.randn(par["NScan"], par["NC"], par["NSlice"],
-                                 par["Nproj"], par["N"])
+                                  par["Nproj"], par["N"])
         self.model_gradient = np.random.randn(par["unknowns"], par["NScan"],
                                               par["NSlice"],
                                               par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["unknowns"], par["NScan"],
-                                 par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["NSlice"],
+                                  par["dimY"], par["dimX"])
 
         self.C = np.random.randn(par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"]) + \
+                                  par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
 
         self.model_gradient = self.model_gradient.astype(DTYPE)
         self.C = self.C.astype(DTYPE)
@@ -127,8 +131,7 @@ class OperatorKspaceRadial(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=6)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
         inpfwd = clarray.to_device(self.queue, self.opinfwd)
@@ -149,8 +152,7 @@ class OperatorKspaceRadial(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=6)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorKspaceCartesian(unittest.TestCase):
@@ -187,24 +189,24 @@ class OperatorKspaceCartesian(unittest.TestCase):
             DTYPE_real=DTYPE_real, trafo=False)
 
         self.opinfwd = np.random.randn(par["unknowns"], par["NSlice"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["unknowns"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
         self.opinadj = np.random.randn(par["NScan"], par["NC"], par["NSlice"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["NScan"], par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
 
         self.model_gradient = np.random.randn(par["unknowns"], par["NScan"],
                                               par["NSlice"],
                                               par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["unknowns"], par["NScan"],
-                                 par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["NSlice"],
+                                  par["dimY"], par["dimX"])
         self.C = np.random.randn(par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"]) + \
+                                  par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
 
         self.model_gradient = self.model_gradient.astype(DTYPE)
         self.C = self.C.astype(DTYPE)
@@ -230,8 +232,7 @@ class OperatorKspaceCartesian(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
         inpfwd = clarray.to_device(self.queue, self.opinfwd)
@@ -252,8 +253,7 @@ class OperatorKspaceCartesian(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorKspaceSMSCartesian(unittest.TestCase):
@@ -295,24 +295,24 @@ class OperatorKspaceSMSCartesian(unittest.TestCase):
             DTYPE_real=DTYPE_real)
 
         self.opinfwd = np.random.randn(par["unknowns"], par["NSlice"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["unknowns"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
         self.opinadj = np.random.randn(par["NScan"], par["NC"], par["packs"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["NScan"], par["NC"], par["packs"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
 
         self.model_gradient = np.random.randn(par["NSlice"], par["unknowns"],
                                               par["NScan"],
                                               par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["NSlice"], par["unknowns"],
-                                 par["NScan"],
-                                 par["dimY"], par["dimX"])
+                                  par["NScan"],
+                                  par["dimY"], par["dimX"])
         self.C = np.random.randn(par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"]) + \
+                                  par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["NC"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
 
         self.model_gradient = self.model_gradient.astype(DTYPE)
         self.C = self.C.astype(DTYPE)
@@ -338,8 +338,7 @@ class OperatorKspaceSMSCartesian(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
         inpfwd = clarray.to_device(self.queue, self.opinfwd)
@@ -360,14 +359,13 @@ class OperatorKspaceSMSCartesian(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorImageSpace(unittest.TestCase):
     def setUp(self):
         parser = tmpArgs()
-        parser.streamed = True
+        parser.streamed = False
         parser.devices = -1
         parser.use_GPU = True
 
@@ -394,19 +392,19 @@ class OperatorImageSpace(unittest.TestCase):
             DTYPE=DTYPE,
             DTYPE_real=DTYPE_real)
         self.opinfwd = np.random.randn(par["unknowns"], par["NSlice"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["unknowns"], par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
         self.opinadj = np.random.randn(par["NScan"], 1, par["NSlice"],
-                                       par["dimY"], par["dimX"]) +\
+                                        par["dimY"], par["dimX"]) +\
             1j * np.random.randn(par["NScan"], 1, par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["dimY"], par["dimX"])
         self.model_gradient = np.random.randn(par["unknowns"], par["NScan"],
                                               par["NSlice"],
                                               par["dimY"], par["dimX"]) + \
             1j * np.random.randn(par["unknowns"], par["NScan"],
-                                 par["NSlice"],
-                                 par["dimY"], par["dimX"])
+                                  par["NSlice"],
+                                  par["dimY"], par["dimX"])
 
         self.model_gradient = self.model_gradient.astype(DTYPE)
         self.opinfwd = self.opinfwd.astype(DTYPE)
@@ -430,8 +428,7 @@ class OperatorImageSpace(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
         inpfwd = clarray.to_device(self.queue, self.opinfwd)
@@ -452,8 +449,7 @@ class OperatorImageSpace(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorImageSpaceStreamed(unittest.TestCase):
@@ -516,8 +512,7 @@ class OperatorImageSpaceStreamed(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
 
@@ -533,8 +528,7 @@ class OperatorImageSpaceStreamed(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorCartesianKSpaceStreamed(unittest.TestCase):
@@ -606,8 +600,7 @@ class OperatorCartesianKSpaceStreamed(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
 
@@ -623,8 +616,7 @@ class OperatorCartesianKSpaceStreamed(unittest.TestCase):
                     outadj.flatten())/self.opinadj.size
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
-
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorKspaceSMSCartesianStreamed(unittest.TestCase):
@@ -701,7 +693,7 @@ class OperatorKspaceSMSCartesianStreamed(unittest.TestCase):
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
 
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
         outfwd = np.zeros_like(self.opinadj)
@@ -717,7 +709,7 @@ class OperatorKspaceSMSCartesianStreamed(unittest.TestCase):
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
 
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 class OperatorRadialKSpaceStreamed(unittest.TestCase):
@@ -787,9 +779,9 @@ class OperatorRadialKSpaceStreamed(unittest.TestCase):
         b = np.vdot(self.opinfwd.flatten(),
                     outadj.flatten())/self.opinadj.size
 
-        print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
     def test_adj_inplace(self):
 
@@ -806,4 +798,4 @@ class OperatorRadialKSpaceStreamed(unittest.TestCase):
 
         print("Adjointness: %.2e +1j %.2e" % ((a - b).real, (a - b).imag))
 
-        self.assertAlmostEqual(a, b, places=12)
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)

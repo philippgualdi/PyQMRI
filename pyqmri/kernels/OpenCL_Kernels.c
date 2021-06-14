@@ -252,6 +252,59 @@ __kernel void update_primal(
     }
 }
 
+__kernel void update_box(
+__global float2 *u_new,
+__global float2 *u,
+__global float* min,
+__global float* max,
+__global int* real, const int NUk
+)
+{
+    size_t Nx = get_global_size(2), Ny = get_global_size(1);
+    size_t NSl = get_global_size(0);
+    size_t x = get_global_id(2), y = get_global_id(1);
+    size_t k = get_global_id(0);
+    size_t i = k*Nx*Ny+Nx*y + x;
+    float norm = 0;
+
+    for (int uk=0; uk<NUk; uk++)
+    {
+        u_new[i] = u[i];
+
+        if(real[uk]>=1)
+        {
+            u_new[i].s1 = 0.0f;
+            if (u_new[i].s0<min[uk])
+            {
+                u_new[i].s0 = min[uk];
+            }
+            if(u_new[i].s0>max[uk])
+            {
+                u_new[i].s0 = max[uk];
+            }
+        }
+        else
+        {
+            norm =  sqrt(
+              pow(
+                (float)(u_new[i].s0),(float)(2.0))
+              + pow((float)(u_new[i].s1),(float)(2.0)));
+            if (norm<min[uk])
+            {
+                u_new[i].s0 *= 1/norm*min[uk];
+                u_new[i].s1 *= 1/norm*min[uk];
+            }
+            if(norm>max[uk])
+            {
+                u_new[i].s0 *= 1/norm*max[uk];
+                u_new[i].s1 *= 1/norm*max[uk];
+            }
+        }
+        i += NSl*Nx*Ny;
+    }
+}
+
+
 __kernel void update_primal_LM(
     __global float2 *u_new,
     __global float2 *u,
@@ -323,8 +376,8 @@ __kernel void gradient(
     for (int uk = 0; uk < NUk; uk++)
     {
         // gradient
-        grad[i] = (float8)(-u[i], -u[i], -u[i] / dz, 0.0f, 0.0f);
-        if (x < Nx - 1)
+        grad[i] = (float8)(-u[i],-u[i],-u[i]*dz,0.0f,0.0f);
+        if (x < Nx-1)
         {
             grad[i].s01 += u[i + 1].s01;
         }
@@ -343,8 +396,8 @@ __kernel void gradient(
         }
         if (k < NSl - 1)
         {
-            grad[i].s45 += u[i + Nx * Ny].s01 / dz;
-        }
+            grad[i].s45 += u[i+Nx*Ny].s01*dz;
+                }
         else
         {
             grad[i].s45 = 0.0f;
@@ -411,16 +464,16 @@ __kernel void sym_grad(
         }
 
         sym[i] = (float16)(
-            val_real.s0, val_imag.s0,
-            val_real.s4, val_imag.s4,
-            val_real.s8 / dz, val_imag.s8 / dz,
-            0.5f * (val_real.s1 + val_real.s3),
-            0.5f * (val_imag.s1 + val_imag.s3),
-            0.5f * (val_real.s2 + val_real.s6 / dz),
-            0.5f * (val_imag.s2 + val_imag.s6 / dz),
-            0.5f * (val_real.s5 + val_real.s7 / dz),
-            0.5f * (val_imag.s5 + val_imag.s7 / dz),
-            0.0f, 0.0f, 0.0f, 0.0f);
+          val_real.s0, val_imag.s0,
+          val_real.s4, val_imag.s4,
+          val_real.s8*dz, val_imag.s8*dz,
+          0.5f*(val_real.s1 + val_real.s3),
+          0.5f*(val_imag.s1 + val_imag.s3),
+          0.5f*(val_real.s2 + val_real.s6*dz),
+          0.5f*(val_imag.s2 + val_imag.s6*dz),
+          0.5f*(val_real.s5 + val_real.s7*dz),
+          0.5f*(val_imag.s5 + val_imag.s7*dz),
+          0.0f,0.0f,0.0f,0.0f);
         // scale gradients
         sym[i] *= ratio[uk];
         i += NSl * Nx * Ny;
@@ -486,7 +539,7 @@ __kernel void divergence(
             //imag
             val.s5 -= p[i - Nx * Ny].s5;
         }
-        div[i] = val.s01 + val.s23 + val.s45 / dz;
+        div[i] = val.s01+val.s23+val.s45*dz;
         // scale gradients
         div[i] *= ratio[ukn];
         i += NSl * Nx * Ny;
@@ -564,9 +617,9 @@ __kernel void sym_divergence(
         }
         // linear step
         //real
-        w[i].s024 = val_real.s012 + val_real.s345 + val_real.s678 / dz;
+        w[i].s024 = val_real.s012 + val_real.s345 + val_real.s678*dz;
         //imag
-        w[i].s135 = val_imag.s012 + val_imag.s345 + val_imag.s678 / dz;
+        w[i].s135 = val_imag.s012 + val_imag.s345 + val_imag.s678*dz;
         // scale gradients
         w[i] *= ratio[uk];
         i += NSl * Nx * Ny;
@@ -650,10 +703,16 @@ __kernel void update_Kyk2(
         val_real *= ratio[uk];
         val_imag *= ratio[uk];
         //real
-        w[i].s024 = -val_real.s012 - val_real.s345 - val_real.s678 / dz - z[i].s024;
+        w[i].s024 = - val_real.s012
+                    - val_real.s345
+                    - val_real.s678*dz
+                    -z[i].s024;
         //imag
-        w[i].s135 = -val_imag.s012 - val_imag.s345 - val_imag.s678 / dz - z[i].s135;
-        i += NSl * Nx * Ny;
+        w[i].s135 = - val_imag.s012
+                    - val_imag.s345
+                    - val_imag.s678*dz
+                    -z[i].s135;
+        i += NSl*Nx*Ny;
     }
 }
 
@@ -849,9 +908,9 @@ __kernel void update_Kyk1(
             val.s5 -= p[i - X * Y].s5;
         }
         // scale gradients
-        val *= ratio[uk];
-        out[uk * NSl * X * Y + k * X * Y + y * X + x] = sum - (val.s01 + val.s23 + val.s45 / dz);
-        i += NSl * X * Y;
+        val*=ratio[uk];
+        out[uk*NSl*X*Y+k*X*Y+y*X+x] = sum - (val.s01+val.s23+val.s45*dz);
+        i += NSl*X*Y;
     }
 }
 
@@ -1005,9 +1064,9 @@ __kernel void update_Kyk1_imagespace(
             val.s5 -= p[i - X * Y].s5;
         }
         // scale gradients
-        val *= ratio[uk];
-        out[uk * NSl * X * Y + k * X * Y + y * X + x] = sum - (val.s01 + val.s23 + val.s45 / dz);
-        i += NSl * X * Y;
+        val*=ratio[uk];
+        out[uk*NSl*X*Y+k*X*Y+y*X+x] = sum - (val.s01+val.s23+val.s45*dz);
+        i += NSl*X*Y;
     }
 }
 
