@@ -366,7 +366,7 @@ class IPianoOptimizer:
     ###############################################################################
     def _saveToFile(self, myit, result):
         """TODO: doc string"""
-        f = h5py.File(self.par["outdir"] + "output_" + self.par["fname"], "a")
+        f = h5py.File(self.par["outdir"] + "output_" + self.par["fname"]+ ".h5", "a")
         f.create_dataset(
             "ipiano_result_" + str(myit), result.shape, dtype=self._DTYPE, data=result
         )
