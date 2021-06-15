@@ -19,6 +19,7 @@ from pyqmri._helper_fun import _utils as utils
 from pyqmri._helper_fun._est_coils import est_coils
 from pyqmri.ipiano import IPianoOptimizer
 from pyqmri.irgn import IRGNOptimizer
+from pyqmri.solver import CGSolver
 
 np.seterr(divide='ignore', invalid='ignore')
 

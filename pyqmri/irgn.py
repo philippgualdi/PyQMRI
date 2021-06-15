@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-""" This module holds the classes for IRGN Optimization without streaming.
-
-Attribues:
-  DTYPE (complex64):
-    Complex working precission. Currently single precission only.
-  DTYPE_real (float32):
-    Real working precission. Currently single precission only.
-"""
+"""Module holding the classes for IRGN Optimization without streaming."""
 from __future__ import division
 
 import time
@@ -25,9 +18,7 @@ from pyqmri._helper_fun import _utils as utils
 
 class IRGNOptimizer:
     """Main IRGN Optimization class.
-
     This Class performs IRGN Optimization either with TGV or TV regularization.
-
     Parameters
     ----------
       par : dict
@@ -60,7 +51,6 @@ class IRGNOptimizer:
         Complex working precission.
       DTYPE_real : numpy.dtype, numpy.float32
         Real working precission.
-
     Attributes
     ----------
       par : dict
@@ -252,12 +242,10 @@ class IRGNOptimizer:
 
     def execute(self, data):
         """Start the IRGN optimization.
-
         This method performs iterative regularized Gauss-Newton optimization
         and calls the inner loop after precomputing the current linearization
         point. Results of the fitting process are saved after each
         linearization step to the output folder.
-
         Parameters
         ----------
           data : numpy.array
@@ -393,7 +381,7 @@ class IRGNOptimizer:
                       "a")
         if self._reg_type == 'TGV':
             f.create_dataset("tgv_result_iter_"+str(myit), result.shape,
-                             dtype=DTYPE, data=result)
+                             dtype=self._DTYPE, data=result)
             f.attrs['res_tgv_iter_'+str(myit)] = self._fval
         else:
             f.create_dataset("tv_result_"+str(myit), result.shape,
@@ -451,12 +439,10 @@ class IRGNOptimizer:
         del grad
 
         datacost = self.irgn_par["lambd"] / 2 * np.linalg.norm(data - b)**2
-        
-        L2Cost = np.linalg.norm(x)/(2.0*self.irgn_par["delta"])
+        # L2Cost = np.linalg.norm(x)/(2.0*self.irgn_par["delta"])
         if self._reg_type == 'LOG':
             regcost = np.sum(np.abs(np.log(1 + self.irgn_par["gamma"] * np.vdot(grad_tv, grad_tv))))
         elif self._reg_type == 'TV':
-
             regcost = self.irgn_par["gamma"] * \
                 np.sum(np.abs(grad_tv))
         elif self._reg_type == 'TGV':
@@ -484,7 +470,6 @@ class IRGNOptimizer:
         # print("Initial Cost: %f" % (self._fval_init))
         print("Costs of Data: %f" % (1e3*datacost / self._fval_init))
         print("Costs of T(G)V: %f" % (1e3*regcost / self._fval_init))
-        # print("Costs of L2 Term: %f" % (1e3*L2Cost / self._fval_init))
         # print("Costs of L2 Term: %f" % (1e3*L2Cost / self._fval_init))
         print("-" * 75)
         print("Function value at GN-Step %i: %f" %
@@ -517,7 +502,7 @@ class IRGNOptimizer:
         grad = grad.get()
         sym_grad = None
         if self._reg_type == 'TGV':
-            v = clarray.to_device(self._queue[0], self.v)
+            v = clarray.to_device(self._queue[0], self._v)
             sym_grad = clarray.to_device(self._queue[0],
                                          np.zeros(x.shape+(8,),
                                                   dtype=self._DTYPE))
