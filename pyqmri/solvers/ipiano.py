@@ -271,14 +271,14 @@ class IPianoBaseSolver(ABC):
 
             self._postUpdate(step_out, tmp_results, step_in)
 
-            if not np.mod(i, 10):
-                # print("Step Size alpha: %s, beta: %s" % (self.alpha, self.beta))
+            if self.display_iterations and np.mod(i, 100):
+              if isinstance(step_out["x"], np.ndarray):
+                  self.model.plot_unknowns(step_out["x"])
+              else:
+                  self.model.plot_unknowns(step_out["x"].get())
 
-                if self.display_iterations:
-                    if isinstance(step_out["x"], np.ndarray):
-                        self.model.plot_unknowns(step_out["x"])
-                    else:
-                        self.model.plot_unknowns(step_out["x"].get())
+            if not np.mod(i, 10):
+                # TODO: f_new use or remove
                 cost, f_new = self._calcResidual(step_out, tmp_results, step_in, data)
                 sys.stdout.write(
                     "Iteration: %04d ---- \u03B1  %2.2e  \u2207 f: %2.8e, \r"
@@ -546,25 +546,27 @@ class IPianoSolverLog(IPianoBaseSolver):
         self.normkernl(tmp_results["reg_norm"], tmp_results["gradx"])
         self.abskernl(tmp_results["reg"],  tmp_results["reg_norm"])
         tmp_results["reg"] = -self.lambd * (tmp_results["temp_reg"] / (1 + tmp_results["reg"]))
+        
+        # TODO: remove test on cpu!!!
+        # if not np.mod(i, 100):
+            
+        #     # Test CPU
+        #     grad_x = tmp_results["gradx"].get()
+        #     grad_x = np.linalg.norm(grad_x, axis=-1) ** 2
 
-        if not np.mod(i, 100):
-            # Test CPU
-            grad_x = tmp_results["gradx"].get()
-            grad_x = np.linalg.norm(grad_x, axis=-1) ** 2
+        #     grad_x = clarray.to_device(self._queue[0], grad_x)
 
-            grad_x = clarray.to_device(self._queue[0], grad_x)
+        #     # Calc
+        #     test_result = -self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
 
-            # Calc
-            test_result = -self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
-
-            reg_test = np.sum(np.abs(tmp_results["reg"].get()))
-            test_test = np.sum(np.abs(test_result.get()))
-            diff_test = np.sum(np.abs(tmp_results["reg"].get() - test_result.get()))
-            print(
-                "Reg: {:.9E} , Test {:.9E}, Diff: {:.9E}".format(
-                    reg_test, test_test, diff_test
-                )
-            )
+        #     reg_test = np.sum(np.abs(tmp_results["reg"].get()))
+        #     test_test = np.sum(np.abs(test_result.get()))
+        #     diff_test = np.sum(np.abs(tmp_results["reg"].get() - test_result.get()))
+        #     print(
+        #         "Reg: {:.9E} , Test {:.9E}, Diff: {:.9E}".format(
+        #             reg_test, test_test, diff_test
+        #         )
+        #     )
 
     def _calcStepsize(self, x_shape, data_shape, iterations=50):
         """Rescale the step size"""
@@ -667,6 +669,7 @@ class IPianoSolverLog(IPianoBaseSolver):
             * clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
         )
         
+        # TODO: datacosts calculate or get from outside
         datacost = 0 # self._fval_init
         # self._FT.FFT(b, clarray.to_device(
         #       self._queue[0], (self._step_val[:, None, ...] *
