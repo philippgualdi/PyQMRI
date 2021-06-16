@@ -262,6 +262,7 @@ class IPianoBaseSolver(ABC):
 
         self._calcStepsize(x_shape=x.shape, data_shape=data.shape)
 
+        self._initTempVariables(tmp_results)
         for i in range(self.iters):
             self._preUpdate(tmp_results, step_in, i)
 
@@ -288,6 +289,9 @@ class IPianoBaseSolver(ABC):
 
         return step_out
 
+    def _initTempVariables(self, tmp_results):
+        ...
+         
     def _preUpdate(self, tmp_results, step_in):
         ...
 
@@ -514,6 +518,14 @@ class IPianoSolverLog(IPianoBaseSolver):
                 par=(self.delta, self.lambd),
             )
         )
+    def _initTempVariables(self, tmp_results):
+        # Ändert sich net jedesmal vor for
+        tmp_results["DAd"].add_event(
+            self._op.adj(
+                tmp_results["DAd"],
+                [tmp_results["d"], self._coils, self.modelgrad, self._grad_op.ratio],
+            )
+        )
 
     def _preUpdate(self, tmp_results, step_in, i):
         tmp_results["Ax"].add_event(
@@ -524,13 +536,6 @@ class IPianoSolverLog(IPianoBaseSolver):
                 tmp_results["DADA"],
                 [tmp_results["Ax"], self._coils, self.modelgrad, self._grad_op.ratio],
                 wait_for=tmp_results["Ax"].events,
-            )
-        )
-        # Ändert sich net jedesmal vor for
-        tmp_results["DAd"].add_event(
-            self._op.adj(
-                tmp_results["DAd"],
-                [tmp_results["d"], self._coils, self.modelgrad, self._grad_op.ratio],
             )
         )
 
