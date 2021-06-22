@@ -261,8 +261,9 @@ class IPianoBaseSolver(ABC):
         (step_out, tmp_results, step_in, data) = self._setupVariables(x, data)
 
         self._calcStepsize(x_shape=x.shape, data_shape=data.shape)
-
+        
         self._initTempVariables(tmp_results)
+        
         for i in range(self.iters):
             self._preUpdate(tmp_results, step_in, i)
 
@@ -272,7 +273,7 @@ class IPianoBaseSolver(ABC):
 
             self._postUpdate(step_out, tmp_results, step_in)
 
-            if self.display_iterations and np.mod(i, 100):
+            if np.mod(i, int(self.iters/2)) == 0 and self.display_iterations:
               if isinstance(step_out["x"], np.ndarray):
                   self.model.plot_unknowns(step_out["x"])
               else:
@@ -280,18 +281,24 @@ class IPianoBaseSolver(ABC):
 
             if not np.mod(i, 10):
                 # TODO: f_new use or remove
-                cost, f_new = self._calcResidual(step_out, tmp_results, step_in, data)
+                cost, f_new, grad_f = self._calcResidual(step_out, tmp_results, step_in, data)
                 sys.stdout.write(
-                    "Iteration: %04d ---- \u03B1  %2.2e  \u2207 f: %2.8e, \r"
-                    % (i, self.alpha, cost)
+                    "Iteration: %04d \u2207 f: %2.8e, f: %2.8e, Costs: %2.8e\r" % (i, grad_f, f_new, cost)
                 )
-            sys.stdout.flush()
+                if grad_f < self.tol:
+                    print(
+                        "Terminated at iteration %d because the energy "
+                        "decrease was %.3e which is below the "
+                        "relative tolerance of %.3e" %
+                        (i+1, grad_f, self.tol))
+                    break
+                sys.stdout.flush()
 
         return step_out
 
     def _initTempVariables(self, tmp_results):
         ...
-         
+
     def _preUpdate(self, tmp_results, step_in):
         ...
 
@@ -573,7 +580,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         #         )
         #     )
 
-    def _calcStepsize(self, x_shape, data_shape, iterations=50):
+    def _calcStepsize(self, x_shape, data_shape, iterations=50, tol=1e-3):
         """Rescale the step size"""
 
         x_temp = np.random.randn(*(x_shape)).astype(
@@ -586,7 +593,7 @@ class IPianoSolverLog(IPianoBaseSolver):
         ) + 1j * np.random.randn(*(data_shape)).astype(self._DTYPE_real)
         x1 = clarray.to_device(self._queue[0], data_temp)
         L = 0
-        for _ in range(iterations):
+        for i in range(iterations):
 
             x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
             x = x / x_norm
@@ -603,14 +610,20 @@ class IPianoSolverLog(IPianoBaseSolver):
                 wait_for=x1.events,
             ).wait()
 
+            
+            # TODO: find a stopping criteria
+            # if i > 0 and np.linalg.norm((x - x_old).get()) < tol:
+            #   print("Termination: Stepsize found after %i with tol: %f" % (i,  np.linalg.norm((x - x_old).get())))
+            #   break
+        
         # Norm forward operator, Norm Gradient,
         L = np.maximum(
             L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1 / self.delta
         )
-
+            
         L = self._DTYPE_real(L)
         self.alpha = 2 * (1 - self.beta) / L
-        print("Step Size alpha: %s, beta: %s, L: %s " % (self.alpha, self.beta, L))
+        print("Stepsize: \u03B1  %2.1e, \u03B2  %2.1e, L %2.1e\r" % (self.alpha, self.beta, L))
 
     def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
         """Forward update of the x values in the iPiano Algorithm.
@@ -674,8 +687,15 @@ class IPianoSolverLog(IPianoBaseSolver):
             * clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
         )
         
-        # TODO: datacosts calculate or get from outside
+        # TODO: calculate on the GPU
+        f_new = np.linalg.norm(f_new.get())
+        
+        
+        grad_f = np.linalg.norm(tmp_results["gradFx"].get())
+        
+        # TODO: datacosts calculate or get from outside!!!!
         datacost = 0 # self._fval_init
+        #datacost = 2 * np.linalg.norm(data - b) ** 2
         # self._FT.FFT(b, clarray.to_device(
         #       self._queue[0], (self._step_val[:, None, ...] *
         #          self.par["C"]))).wait()
@@ -686,4 +706,4 @@ class IPianoSolverLog(IPianoBaseSolver):
             np.abs(clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])).get())
         )
         costs = datacost + L2Cost + regcost
-        return costs, f_new.get()
+        return regcost, f_new, grad_f
