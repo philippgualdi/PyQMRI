@@ -421,11 +421,11 @@ class IPianoOptimizer:
 
         print("-" * 75)
         print("Initial Cost: {:.5E}".format(self._fval_init))
-        print("Costs of Data: {:.5E}".format(datacost))
-        print("Costs of LOG: {:.5E}".format(regcost))
-        print("Costs of L2 Term: {:.5E}".format(L2Cost))
+        print("Costs of Data: {:.5E}".format((1e3*datacost / self._fval_init)))
+        print("Costs of REG: {:.5E}".format( (1e3*regcost / self._fval_init)))
+        #print("Costs of L2 Term: {:.5E}".format(L2Cost))
         print("-" * 75)
-        print("Function value at iPiano-Step {}: {:.5E}".format(it, self._fval))
+        print("Function value at iPiano-Step {}: {:.5f}".format(it,  1e3*self._fval / self._fval_init))
         print("-" * 75)
         return b
 
