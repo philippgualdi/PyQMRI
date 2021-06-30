@@ -273,7 +273,7 @@ class IPianoBaseSolver(ABC):
 
             self._postUpdate(step_out, tmp_results, step_in)
 
-            if np.mod(i, int(self.iters/2)) == 0 and self.display_iterations:
+            if np.mod(i, int(self.iters/10)) == 0 and self.display_iterations:
               if isinstance(step_out["x"], np.ndarray):
                   self.model.plot_unknowns(step_out["x"])
               else:
@@ -295,6 +295,56 @@ class IPianoBaseSolver(ABC):
                 sys.stdout.flush()
 
         return step_out
+
+
+    def _calcStepsize(self, x_shape, data_shape, iterations=50, tol=1e-3):
+        """Rescale the step size"""
+
+        x_temp = np.random.randn(*(x_shape)).astype(
+            self._DTYPE_real
+        ) + 1j * np.random.randn(*(x_shape)).astype(self._DTYPE_real)
+        x = clarray.to_device(self._queue[0], x_temp)
+        x_old = clarray.to_device(self._queue[0], x_temp)
+        data_temp = np.random.randn(*(data_shape)).astype(
+            self._DTYPE_real
+        ) + 1j * np.random.randn(*(data_shape)).astype(self._DTYPE_real)
+        x1 = clarray.to_device(self._queue[0], data_temp)
+        L = 0
+        for i in range(iterations):
+
+            x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
+            x = x / x_norm
+
+                        
+            # TODO: find a stopping criteria
+            if i > 10 and np.linalg.norm((x - x_old).get()) < tol:
+              print("Termination: Stepsize found after %i with tol: %f" % (i,  np.linalg.norm((x - x_old).get())))
+              break
+          
+          
+            x_old = x
+            self._op.fwd(
+                out=x1,
+                inp=[x_old, self._coils, self.modelgrad],
+                wait_for=x.events,
+            ).wait()
+            self._op.adj(
+                x,
+                [x1, self._coils, self.modelgrad],
+                wait_for=x1.events,
+            ).wait()
+
+
+        
+        # Norm forward operator, Norm Gradient,
+        L = np.maximum(
+            L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1 / self.delta
+        )
+            
+        L = self._DTYPE_real(L)
+        self.alpha = 2 * (1 - self.beta) / L
+        print("Stepsize: \u03B1  %2.1e, \u03B2  %2.1e, L %2.1e\r" % (self.alpha, self.beta, L))
+
 
     def _initTempVariables(self, tmp_results):
         ...

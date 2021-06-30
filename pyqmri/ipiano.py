@@ -401,8 +401,7 @@ class IPianoOptimizer:
         grad_H1 = grad[self.par["unknowns_TGV"] :]
         del grad
 
-        datacost = 2 * np.linalg.norm(data - b) ** 2
-        L2Cost = np.linalg.norm(x) / (2.0 * self.ipiano_par["delta"])
+        datacost = self.ipiano_par["delta"] / 2  * np.linalg.norm(data - b) ** 2
         regcost = self.ipiano_par["lambd"] * np.sum(
             np.abs(np.log(1 + np.vdot(grad_reg, grad_reg)))
         )
@@ -410,8 +409,6 @@ class IPianoOptimizer:
         self._fval = (
             datacost
             + regcost
-            + L2Cost
-            # + self.ipiano_par["omega"] / 2 * np.linalg.norm(grad_H1) ** 2
         )
         del grad_reg, grad_H1
 
@@ -422,8 +419,7 @@ class IPianoOptimizer:
         print("-" * 75)
         print("Initial Cost: {:.5E}".format(self._fval_init))
         print("Costs of Data: {:.5E}".format((1e3*datacost / self._fval_init)))
-        print("Costs of REG: {:.5E}".format( (1e3*regcost / self._fval_init)))
-        #print("Costs of L2 Term: {:.5E}".format(L2Cost))
+        print("Costs of REG: {:.5E}".format((1e3*regcost / self._fval_init)))
         print("-" * 75)
         print("Function value at iPiano-Step {}: {:.5f}".format(it,  1e3*self._fval / self._fval_init))
         print("-" * 75)
