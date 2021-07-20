@@ -229,6 +229,19 @@ class IPianoBaseSolver(ABC):
                 DTYPE=DTYPE,
                 DTYPE_real=DTYPE_real,
             )
+        elif reg_type == "Heavyball":
+            pdop = IPianoSolverHeavyball(
+                par,
+                ipiano_par,
+                queue,
+                init_fval,
+                prg,
+                linops,
+                coils,
+                model,
+                DTYPE=DTYPE,
+                DTYPE_real=DTYPE_real,
+            )
         else:
             raise NotImplementedError
         return pdop
@@ -237,7 +250,7 @@ class IPianoBaseSolver(ABC):
         """Destructor.
         Releases GPU memory arrays.
         """
-
+    
     def run(self, x, data):
         """
         Optimization with 3D iPiano regularization.
@@ -266,6 +279,8 @@ class IPianoBaseSolver(ABC):
         
         for i in range(self.iters):
             self._preUpdate(tmp_results, step_in, i)
+            
+            self._update_g(tmp_results, step_in)
 
             self._update_f(tmp_results, step_in)
 
@@ -352,10 +367,10 @@ class IPianoBaseSolver(ABC):
     def _preUpdate(self, tmp_results, step_in):
         ...
 
-    def _update_f(self, tmp_results, step_in):
+    def _update_g(self, tmp_results, step_in):
         ...
-
-    def _calcStepsize(self, x_shape, data_shape, iterations=50):
+        
+    def _update_f(self, tmp_results, step_in):
         ...
 
     def _update(self, step_out, tmp_results, step_in):
@@ -540,7 +555,314 @@ class IPianoSolverLog(IPianoBaseSolver):
         """
         if wait_for is None:
             wait_for = []
-        return self._prg[idx].update_ipiano_log_grad_f(
+        return self._prg[idx].update_ipiano_heavyball_grad_f(
+            self._queue[4 * idx + idxq],
+            self._kernelsize,
+            None,
+            outp.data,
+            inp[0].data,
+            inp[1].data,
+            inp[2].data,
+            inp[3].data,
+            inp[4].data,
+            self._DTYPE_real(par[0]),
+            self._DTYPE_real(par[1]),
+            self.min_const[idx].data,
+            self.max_const[idx].data,
+            self.real_const[idx].data,
+            np.int32(self.unknowns),
+            wait_for=(
+                inp[0].events + inp[1].events + inp[2].events + inp[3].events + wait_for
+            ),
+        )
+    def _update_g(self, tmp_results, step_in):
+        pass
+
+    def _update_f(self, tmp_results, step_in):
+        tmp_results["gradFx"].add_event(
+            self.update_f(
+                outp=tmp_results["gradFx"],
+                inp=(
+                    tmp_results["DADA"],
+                    tmp_results["DAd"],
+                    step_in["x"],
+                    step_in["xk"],
+                    tmp_results["reg"],
+                ),
+                par=(self.delta, self.lambd),
+            )
+        )
+    def _initTempVariables(self, tmp_results):
+        # Ändert sich net jedesmal vor for
+        tmp_results["DAd"].add_event(
+            self._op.adj(
+                tmp_results["DAd"],
+                [tmp_results["d"], self._coils, self.modelgrad, self._grad_op.ratio],
+            )
+        )
+
+    def _preUpdate(self, tmp_results, step_in, i):
+        tmp_results["Ax"].add_event(
+            self._op.fwd(tmp_results["Ax"], [step_in["x"], self._coils, self.modelgrad])
+        )
+        tmp_results["DADA"].add_event(
+            self._op.adj(
+                tmp_results["DADA"],
+                [tmp_results["Ax"], self._coils, self.modelgrad, self._grad_op.ratio],
+                wait_for=tmp_results["Ax"].events,
+            )
+        )
+
+        tmp_results["gradx"].add_event(
+            self._grad_op.fwd(tmp_results["gradx"], step_in["x"])
+        )
+
+        tmp_results["temp_reg"].add_event(
+            self._grad_op.adj(tmp_results["temp_reg"], tmp_results["gradx"])
+        )
+
+        # Calc GPU
+        self.normkernl(tmp_results["reg_norm"], tmp_results["gradx"])
+        self.abskernl(tmp_results["reg"],  tmp_results["reg_norm"])
+        tmp_results["reg"] = -self.lambd * (tmp_results["temp_reg"] / (1 + tmp_results["reg"]))
+        
+        # TODO: remove test on cpu!!!
+        # if not np.mod(i, 100):
+            
+        #     # Test CPU
+        #     grad_x = tmp_results["gradx"].get()
+        #     grad_x = np.linalg.norm(grad_x, axis=-1) ** 2
+
+        #     grad_x = clarray.to_device(self._queue[0], grad_x)
+
+        #     # Calc
+        #     test_result = -self.lambd * (tmp_results["temp_reg"] / (1 + grad_x))
+
+        #     reg_test = np.sum(np.abs(tmp_results["reg"].get()))
+        #     test_test = np.sum(np.abs(test_result.get()))
+        #     diff_test = np.sum(np.abs(tmp_results["reg"].get() - test_result.get()))
+        #     print(
+        #         "Reg: {:.9E} , Test {:.9E}, Diff: {:.9E}".format(
+        #             reg_test, test_test, diff_test
+        #         )
+        #     )
+
+
+    def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
+        """Forward update of the x values in the iPiano Algorithm.
+        Parameters
+        ----------
+          outp : PyOpenCL.Array
+            The result of the update gradient function f
+          inp : list(PyOpenCL.Array)
+            The values for calculate f
+                x       -> the actual parameters
+                x_(n-1) -> old x
+                df(x)   -> regularization parameter
+          par : list
+            List of necessary parameters for the update
+          idx : int
+            Index of the device to use
+          idxq : int
+            Index of the queue to use
+          wait_for : list of PyOpenCL.Events, None
+            A optional list for PyOpenCL.Events to wait for
+        Returns
+        -------
+            PyOpenCL.Event:
+                A PyOpenCL.Event to wait for.
+        """
+        if wait_for is None:
+            wait_for = []
+        return self._prg[idx].update_ipiano_heavyball_fwd(
+            self._queue[4 * idx + idxq],
+            self._kernelsize,
+            None,
+            outp.data,
+            inp[0].data,
+            inp[1].data,
+            inp[2].data,
+            self._DTYPE_real(par[0]),
+            self._DTYPE_real(par[1]),
+            self.min_const[idx].data,
+            self.max_const[idx].data,
+            self.real_const[idx].data,
+            np.int32(self.unknowns),
+            wait_for=(inp[0].events + inp[1].events + inp[2].events + wait_for),
+        )
+
+    def _update(self, step_out, tmp_results, step_in):
+        return self.update(
+            outp=step_out["x"],
+            inp=(step_in["x"], step_in["xold"], tmp_results["gradFx"]),
+            par=(self.alpha, self.beta),
+        )
+
+    def _postUpdate(self, step_out, tmp_results, step_in):
+        del step_in["xold"]
+        step_in["xold"] = step_in["x"].copy()
+        step_in["x"] = step_out["x"].copy()
+
+    def _calcResidual(self, step_out, tmp_results, step_in, data):
+
+        f_new = clarray.vdot(tmp_results["DADA"], tmp_results["DAd"]) + clarray.sum(
+            self.lambd
+            * clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
+        )
+        
+        # TODO: calculate on the GPU
+        f_new = np.linalg.norm(f_new.get())
+        
+        
+        grad_f = np.linalg.norm(tmp_results["gradFx"].get())
+        
+        # TODO: datacosts calculate or get from outside!!!!
+        datacost = 0 # self._fval_init
+        #datacost = 2 * np.linalg.norm(data - b) ** 2
+        # self._FT.FFT(b, clarray.to_device(
+        #       self._queue[0], (self._step_val[:, None, ...] *
+        #          self.par["C"]))).wait()
+        # b = b.get()
+        #datacost = 2 * np.linalg.norm(data - b) ** 2
+        L2Cost = np.linalg.norm(step_out["x"].get()) / (2.0 * self.delta)
+        regcost = self.lambd * np.sum(
+            np.abs(clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"])).get())
+        )
+        costs = datacost + L2Cost + regcost
+        return regcost, f_new, grad_f
+
+
+
+
+class IPianoSolverHeavyball(IPianoBaseSolver):
+    """Logbarrier optimization with iPiano.
+    This Class performs inertial proximal optimization reconstruction
+    on single precission complex input data.
+    Parameters
+    ----------
+          par : dict
+            A python dict containing the necessary information to
+            setup the object. Needs to contain the number of slices (NSlice),
+            number of scans (NScan), image dimensions (dimX, dimY), number of
+            coils (NC), sampling points (N) and read outs (NProj)
+            a PyOpenCL queue (queue) and the complex coil
+            sensitivities (C).
+          irgn_par : dict
+            A python dict containing the regularization
+            parameters for a given gauss newton step.
+          queue : list of PyOpenCL.Queues
+            A list of PyOpenCL queues to perform the optimization.
+          tau : float
+            Estimated step size based on operator norm of regularization.
+          fval : float
+            Estimate of the initial cost function value to
+            scale the displayed values.
+          prg : PyOpenCL.Program
+            A PyOpenCL Program containing the
+            kernels for optimization.
+          linops : list of PyQMRI Operator
+            The linear operators used for fitting.
+          coils : PyOpenCL Buffer or empty list
+            The coils used for reconstruction.
+          model : PyQMRI.Model
+            The model which should be fitted
+      Attributes
+      ----------
+        alpha : float
+          Log regularization weight
+    """
+
+    def __init__(
+        self,
+        par,
+        ipiano_par,
+        queue,
+        # tau,
+        fval,
+        prg,
+        linop,
+        coils,
+        model,
+        **kwargs
+    ):
+        super().__init__(
+            par,
+            ipiano_par,
+            queue,
+            # tau,
+            fval,
+            prg,
+            coils,
+            model,
+            **kwargs
+        )
+
+        self._op = linop[0]
+        self._grad_op = linop[1]
+
+    def _setupVariables(self, x, data):
+        data = clarray.to_device(self._queue[0], data.astype(self._DTYPE))
+
+        step_in = {}
+        step_out = {}
+        tmp_results = {}
+
+        step_in["x"] = clarray.to_device(self._queue[0], x)
+        step_in["xold"] = clarray.to_device(self._queue[0], x)
+        step_in["xk"] = step_in["x"].copy()
+
+        step_out["x"] = clarray.zeros_like(step_in["x"])
+
+        tmp_results["gradFx"] = step_in["x"].copy()
+        tmp_results["DADA"] = clarray.zeros_like(step_in["x"])
+        tmp_results["DAd"] = clarray.zeros_like(step_in["x"])
+        tmp_results["d"] = data.copy()
+        tmp_results["Ax"] = clarray.zeros_like(data)
+
+        tmp_results["temp_reg"] = clarray.zeros_like(step_in["x"])
+        tmp_results["gradx"] = clarray.zeros(
+            self._queue[0], step_in["x"].shape + (4,), dtype=self._DTYPE
+        )
+
+        tmp_results["reg_norm"] = clarray.zeros(
+            self._queue[0],
+            step_in["x"].shape + (2,),
+            dtype=self._DTYPE_real,
+        )
+        tmp_results["reg"] = clarray.zeros(
+            self._queue[0], step_in["x"].shape, dtype=self._DTYPE_real
+        )
+        return (step_out, tmp_results, step_in, data)
+
+    def update_f(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
+        """Forward update of the gradient f(x) function in the iPiano Algorithm.
+        Parameters
+        ----------
+          outp : PyOpenCL.Array
+            The result of the update gradient function f
+          inp : list(PyOpenCL.Array)
+            The values for calculate f
+                DADA    -> the adjointness of calcuated gradient
+                Ad      -> the adjointness of data
+                x       -> the actual parameters
+                x_k     -> linearisation point
+                reg     -> regularization parameter
+          par : list
+            List of necessary parameters for the update
+          idx : int
+            Index of the device to use
+          idxq : int
+            Index of the queue to use
+          wait_for : list of PyOpenCL.Events, None
+            A optional list for PyOpenCL.Events to wait for
+        Returns
+        -------
+            PyOpenCL.Event:
+                A PyOpenCL.Event to wait for.
+        """
+        if wait_for is None:
+            wait_for = []
+        return self._prg[idx].update_ipiano_heavyball_grad_f(
             self._queue[4 * idx + idxq],
             self._kernelsize,
             None,
@@ -630,50 +952,6 @@ class IPianoSolverLog(IPianoBaseSolver):
         #         )
         #     )
 
-    def _calcStepsize(self, x_shape, data_shape, iterations=50, tol=1e-3):
-        """Rescale the step size"""
-
-        x_temp = np.random.randn(*(x_shape)).astype(
-            self._DTYPE_real
-        ) + 1j * np.random.randn(*(x_shape)).astype(self._DTYPE_real)
-        x = clarray.to_device(self._queue[0], x_temp)
-        x_old = clarray.to_device(self._queue[0], x_temp)
-        data_temp = np.random.randn(*(data_shape)).astype(
-            self._DTYPE_real
-        ) + 1j * np.random.randn(*(data_shape)).astype(self._DTYPE_real)
-        x1 = clarray.to_device(self._queue[0], data_temp)
-        L = 0
-        for i in range(iterations):
-
-            x_norm = self._DTYPE_real(np.linalg.norm(x.get()))
-            x = x / x_norm
-
-            x_old = x
-            self._op.fwd(
-                out=x1,
-                inp=[x_old, self._coils, self.modelgrad],
-                wait_for=x.events,
-            ).wait()
-            self._op.adj(
-                x,
-                [x1, self._coils, self.modelgrad],
-                wait_for=x1.events,
-            ).wait()
-
-            
-            # TODO: find a stopping criteria
-            # if i > 0 and np.linalg.norm((x - x_old).get()) < tol:
-            #   print("Termination: Stepsize found after %i with tol: %f" % (i,  np.linalg.norm((x - x_old).get())))
-            #   break
-        
-        # Norm forward operator, Norm Gradient,
-        L = np.maximum(
-            L, np.abs(clarray.vdot(x, x_old).get()) + 8 * self.lambd + 1 / self.delta
-        )
-            
-        L = self._DTYPE_real(L)
-        self.alpha = 2 * (1 - self.beta) / L
-        print("Stepsize: \u03B1  %2.1e, \u03B2  %2.1e, L %2.1e\r" % (self.alpha, self.beta, L))
 
     def update(self, outp, inp, par, idx=0, idxq=0, wait_for=None):
         """Forward update of the x values in the iPiano Algorithm.
@@ -709,8 +987,11 @@ class IPianoSolverLog(IPianoBaseSolver):
             inp[0].data,
             inp[1].data,
             inp[2].data,
+            inp[3].data,
             self._DTYPE_real(par[0]),
             self._DTYPE_real(par[1]),
+            self._DTYPE_real(par[0]/par[2]),
+            self._DTYPE_real(1/(1 + par[0]/par[2])),
             self.min_const[idx].data,
             self.max_const[idx].data,
             self.real_const[idx].data,
@@ -721,8 +1002,8 @@ class IPianoSolverLog(IPianoBaseSolver):
     def _update(self, step_out, tmp_results, step_in):
         return self.update(
             outp=step_out["x"],
-            inp=(step_in["x"], step_in["xold"], tmp_results["gradFx"]),
-            par=(self.alpha, self.beta),
+            inp=(step_in["x"], step_in["xold"], step_in["xk"], tmp_results["gradFx"]),
+            par=(self.alpha, self.beta, self.delta),
         )
 
     def _postUpdate(self, step_out, tmp_results, step_in):
