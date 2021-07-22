@@ -12,6 +12,7 @@ import numpy as np
 import pyopencl.array as clarray
 import pyopencl.clmath as clmath
 import pyopencl.elementwise as elwis
+import pyopencl.reduction as clred
 
 
 class IPianoBaseSolver(ABC):
@@ -147,7 +148,7 @@ class IPianoBaseSolver(ABC):
         self.normkernl = elwis.ElementwiseKernel(
             context=par["ctx"][0],
             arguments="float *out, {}2 *x".format(var_size, var_size),
-            operation="out[i]=x[i].s0*x[i].s0+x[i].s1*x[i].s1",
+            operation="out[i]=pown(x[i].s0,2) + pown(x[i].s1,2)",
             name="norm_kernel",
         )
         self.abskernl = elwis.ElementwiseKernel(
@@ -156,6 +157,11 @@ class IPianoBaseSolver(ABC):
             operation="out[i]=x[i].s0+x[i].s1",
             name="abs_kernel",
         )
+        self.normkrnldiff = clred.ReductionKernel(
+            par["ctx"][0], self._DTYPE_real, 0, 
+            reduce_expr="a+b", 
+            map_expr="pown(x[i].s0-y[i].s0,2)+pown(x[i].s1-y[i].s1,2)",
+            arguments="__global {}2 *x, __global {}2 *y".format(var_size, var_size))
 
     @staticmethod
     def factory(
@@ -1034,26 +1040,25 @@ class IPianoSolverHeavyball(IPianoBaseSolver):
 
     def _calcResidual(self, step_out, tmp_results, step_in, data):
 
-        f_new = clarray.vdot(tmp_results["DADA"], tmp_results["DAd"]) + clarray.sum(
+        f = clarray.vdot(tmp_results["DADA"], tmp_results["DAd"]) + clarray.sum(
             self.lambd
             * clmath.log(1 + clarray.vdot(tmp_results["gradx"], tmp_results["gradx"]))
         )
 
         # TODO: calculate on the GPU
-        f_new = np.linalg.norm(f_new.get())
+        self.normkernl(f, f)
+        f_new = np.linalg.norm(f.get())
+        #f_new = np.linalg.norm(f_new.get())
 
+        #self.normkernl(tmp_results["gradFx"], tmp_results["gradFx"])
+        #grad_f = tmp_results["gradFx"].real.get()
         grad_f = np.linalg.norm(tmp_results["gradFx"].get())
 
         # TODO: datacosts calculate or get from outside!!!!
         # datacost = 0  # self._fval_init
-        datacost = 2 * np.linalg.norm(tmp_results["Ax"] - data) ** 2
-        # datacost = 2 * np.linalg.norm(data - b) ** 2
-        # self._FT.FFT(b, clarray.to_device(
-        #       self._queue[0], (self._step_val[:, None, ...] *
-        #          self.par["C"]))).wait()
-        # b = b.get()
-        # datacost = 2 * np.linalg.norm(data - b) ** 2
-        L2Cost = np.linalg.norm(step_out["x"].get()) / (2.0 * self.delta)
+        datacost = 2 * self.normkrnldiff(tmp_results["Ax"], data) ** 2
+        #L2Cost =  np.linalg.norm(self.normkrnldiff(step_out["x"], step_in["xk"]).get()) / (2.0 * self.delta)
+        #L2Cost = np.linalg.norm(step_out["x"].get()) / (2.0 * self.delta)
         regcost = self.lambd * np.sum(
             np.abs(
                 clmath.log(
@@ -1061,5 +1066,5 @@ class IPianoSolverHeavyball(IPianoBaseSolver):
                 ).get()
             )
         )
-        costs = datacost + L2Cost + regcost
-        return costs, f_new, grad_f
+        costs = datacost + regcost
+        return costs.get(), f_new, grad_f
