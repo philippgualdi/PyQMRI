@@ -119,97 +119,89 @@ class IPianoOptimizer:
 
         if streamed or SMS == 1:
             raise NotImplementedError("Not implemented")
-
-        if streamed and par["NSlice"] / (num_dev * par["par_slices"]) < 2:
-            raise ValueError(
-                "Number of Slices devided by parallel "
-                "computed slices and devices needs to be larger two.\n"
-                "Current values are %i total Slices, %i parallel slices and "
-                "%i compute devices." % (par["NSlice"], par["par_slices"], num_dev)
-            )
         if streamed and par["NSlice"] % par["par_slices"]:
             raise ValueError(
                 "Number of Slices devided by parallel "
                 "computed slices needs to be an integer.\n"
                 "Current values are %i total Slices with %i parallel slices."
-                % (par["NSlice"], par["par_slices"])
-            )
+                % (par["NSlice"], par["par_slices"]))
         if DTYPE == np.complex128:
             if streamed:
-                kernname = "kernels/OpenCL_Kernels_double_streamed.c"
+                kernname = 'kernels/OpenCL_Kernels_double_streamed.c'
             else:
-                kernname = "kernels/OpenCL_Kernels_double.c"
+                kernname = 'kernels/OpenCL_Kernels_double.c'
             for j in range(num_dev):
-                self._prg.append(
-                    Program(
-                        self._ctx[j], open(resource_filename("pyqmri", kernname)).read()
-                    )
-                )
+                self._prg.append(Program(
+                    self._ctx[j],
+                    open(
+                        resource_filename(
+                            'pyqmri', kernname)
+                        ).read()))
         else:
             if streamed:
-                kernname = "kernels/OpenCL_Kernels_streamed.c"
+                kernname = 'kernels/OpenCL_Kernels_streamed.c'
             else:
-                kernname = "kernels/OpenCL_Kernels.c"
+                kernname = 'kernels/OpenCL_Kernels.c'
             for j in range(num_dev):
-                self._prg.append(
-                    Program(
-                        self._ctx[j], open(resource_filename("pyqmri", kernname)).read()
-                    )
-                )
+                self._prg.append(Program(
+                    self._ctx[j],
+                    open(
+                        resource_filename(
+                            'pyqmri', kernname)).read()))
 
         if imagespace:
             self._coils = []
             self.sliceaxis = 1
+            # if self._streamed:
+            #     self._data_trans_axes = (1, 0, 2, 3)
+            #     self._grad_trans_axes = (2, 0, 1, 3, 4)
         else:
-            self._data_shape = (
-                par["NScan"],
-                par["NC"],
-                par["NSlice"],
-                par["Nproj"],
-                par["N"],
-            )
+            if SMS:
+                self._data_shape = (par["NScan"], par["NC"],
+                                        par["packs"]*par["numofpacks"], 
+                                        par["Nproj"], par["N"])
+            else:
+                self._data_shape = (par["NScan"], par["NC"],
+                                    par["NSlice"], par["Nproj"], par["N"])
             if self._streamed:
                 self._data_trans_axes = (2, 0, 1, 3, 4)
                 self._coils = np.require(
-                    np.swapaxes(par["C"], 0, 1), requirements="C", dtype=DTYPE
-                )
+                    np.swapaxes(par["C"], 0, 1), requirements='C',
+                    dtype=DTYPE)
 
                 if SMS:
-                    self._data_shape = (
-                        par["packs"] * par["numofpacks"],
-                        par["NScan"],
-                        par["NC"],
-                        par["dimY"],
-                        par["dimX"],
-                    )
-                    self._data_shape_T = (
-                        par["NScan"],
-                        par["NC"],
-                        par["packs"] * par["numofpacks"],
-                        par["dimY"],
-                        par["dimX"],
-                    )
+                    self._data_shape = (par["packs"]*par["numofpacks"],
+                                        par["NScan"],
+                                        par["NC"], par["dimY"], par["dimX"])
+                    self._data_shape_T = (par["NScan"], par["NC"],
+                                          par["packs"]*par["numofpacks"],
+                                          par["dimY"], par["dimX"])
                     self._expdim_dat = 1
                     self._expdim_C = 0
                 else:
-                    self._data_shape = (
-                        par["NSlice"],
-                        par["NScan"],
-                        par["NC"],
-                        par["Nproj"],
-                        par["N"],
-                    )
+                    self._data_shape = (par["NSlice"], par["NScan"], par["NC"],
+                                        par["Nproj"], par["N"])
                     self._data_shape_T = self._data_shape
                     self._expdim_dat = 2
                     self._expdim_C = 1
             else:
-                self._coils = clarray.to_device(self._queue[0], self.par["C"])
+                self._coils = clarray.to_device(self._queue[0],
+                                                self.par["C"])
 
         self._MRI_operator, self._FT = operator.Operator.MRIOperatorFactory(
-            par, self._prg, DTYPE, DTYPE_real, trafo, imagespace, SMS, streamed
-        )
+            par,
+            self._prg,
+            DTYPE,
+            DTYPE_real,
+            trafo,
+            imagespace,
+            SMS,
+            streamed
+            )
 
-        self._grad_op = self._setupLinearOps(DTYPE, DTYPE_real)
+        self._grad_op = self._setupLinearOps(
+            DTYPE,
+            DTYPE_real)
 
         self._pdop = IPianoBaseSolver.factory(
             self._prg,
@@ -240,13 +232,16 @@ class IPianoOptimizer:
         """Setup the Gradient Operator."""
 
         grad_op = operator.Operator.GradientOperatorFactory(
-            self.par, self._prg, DTYPE, DTYPE_real, self._streamed
-        )
+            self.par,
+            self._prg,
+            DTYPE,
+            DTYPE_real,
+            self._streamed)
         return grad_op
 
     def execute(self, data):
         """Start the iPiano optimization.
-        This method performs iterative regularized Piano optimization
+        This method performs iterative regularized Heavyball optimization
         and calls the inner loop after precomputing the current linearization
         point. Results of the fitting process are saved after each
         linearization step to the output folder.
@@ -254,10 +249,10 @@ class IPianoOptimizer:
         ----------
               data : numpy.array
                 the data to perform optimization/fitting on.
-
         """
 
         self._delta = self.ipiano_par["delta"]
+        iters = self.ipiano_par["start_iters"]
 
         # Todo: remove
         self._gamma = self.ipiano_par["gamma"]
@@ -272,9 +267,9 @@ class IPianoOptimizer:
         # Start optimizations
         for ign in range(self.ipiano_par["max_gn_it"]):
             start = time.time()
-
-            self._modelgrad = np.nan_to_num(self._model.execute_gradient(result))
-
+            self._modelgrad = np.nan_to_num(
+                self._model.execute_gradient(result))
+             
             self._balanceModelGradients(result)
             self._step_val = np.nan_to_num(self._model.execute_forward(result))
 
@@ -286,9 +281,9 @@ class IPianoOptimizer:
             self._pdop.updateRegPar(self.ipiano_par)
 
             ### ipiano solver execute
-            result = self._ipianoSolve3D(result, data, ign)
+            result = self._ipianoSolve3D(result, data, ign) # TODO: check parameter(result, iters, data, ign)
 
-            # iters = np.fmin(iters * 2, self.ipiano_par["max_iters"])
+            iters = np.fmin(iters * 2, self.ipiano_par["max_iters"])
 
             end = time.time() - start
             self.gn_res.append(self._fval)
@@ -297,7 +292,7 @@ class IPianoOptimizer:
             print("-" * 75)
             self._fval_old = self._fval
             self._saveToFile(ign, self._model.rescale(result)["data"])
-            # self._calcResidual(result, data, ign + 1)
+        self._calcResidual(result, data, ign + 1)
 
     def _updateIPIANORegPar(self, it):
         """Update the iPiano parameter.
@@ -310,9 +305,9 @@ class IPianoOptimizer:
               it : int
                 the actual iteration of the optimization.
         """
-        self.ipiano_par["delta"] = np.minimum(
-            self._delta * self.ipiano_par["delta_inc"] ** it,
-            self.ipiano_par["delta_max"],
+        self.ipiano_par["delta"] = np.maximum(
+            self._delta * self.ipiano_par["delta_dec"] ** it,
+            self.ipiano_par["delta_min"],
         )
         self.ipiano_par["gamma"] = np.maximum(
             self._gamma * self.ipiano_par["gamma_dec"] ** it,
@@ -326,18 +321,13 @@ class IPianoOptimizer:
     def _balanceModelGradients(self, result):
         scale = np.reshape(
             self._modelgrad,
-            (
-                self.par["unknowns"],
-                self.par["NScan"]
-                * self.par["NSlice"]
-                * self.par["dimY"]
-                * self.par["dimX"],
-            ),
-        )
+            (self.par["unknowns"],
+             self.par["NScan"] * self.par["NSlice"] *
+             self.par["dimY"] * self.par["dimX"]))
         scale = np.linalg.norm(scale, axis=-1)
         print("Initial Norm: ", np.linalg.norm(scale))
         print("Initial Ratio: ", scale)
-        scale /= np.linalg.norm(scale) / np.sqrt(self.par["unknowns"])
+        scale /= np.linalg.norm(scale)/np.sqrt(self.par["unknowns"])
         scale = 1 / scale
         scale[~np.isfinite(scale)] = 1
         for uk in range(self.par["unknowns"]):
@@ -348,15 +338,9 @@ class IPianoOptimizer:
             result[uk, ...] /= self._model.uk_scale[uk]
             self._modelgrad[uk] *= self._model.uk_scale[uk]
         scale = np.reshape(
-            self._modelgrad,
-            (
-                self.par["unknowns"],
-                self.par["NScan"]
-                * self.par["NSlice"]
-                * self.par["dimY"]
-                * self.par["dimX"],
-            ),
-        )
+            self._modelgrad,(self.par["unknowns"],
+             self.par["NScan"] * self.par["NSlice"] *
+             self.par["dimY"] * self.par["dimX"]))
         scale = np.linalg.norm(scale, axis=-1)
         print("Norm after rescale: ", np.linalg.norm(scale))
         print("Ratio after rescale: ", scale)
@@ -365,8 +349,8 @@ class IPianoOptimizer:
     # New .hdf5 save files ########################################################
     ###############################################################################
     def _saveToFile(self, myit, result):
-        """TODO: doc string"""
-        f = h5py.File(self.par["outdir"] + "output_" + self.par["fname"]+ ".h5", "a")
+        f = h5py.File(self.par["outdir"]+"output_" + self.par["fname"] + ".h5",
+                      "a")
         f.create_dataset(
             "ipiano_result_" + str(myit), result.shape, dtype=self._DTYPE, data=result
         )
@@ -378,15 +362,13 @@ class IPianoOptimizer:
         b = self._calcResidual(result, data, it)
 
         tmpx = clarray.to_device(self._queue[0], result)
-        # b = FCAx|xk
-        # tt = FC dA/dx|xk
-        tt = self._MRI_operator.fwdoop([tmpx, self._coils, self._modelgrad]).get()
-        res = data - b + tt
+        res = data - b + self._MRI_operator.fwdoop(
+                [tmpx, self._coils, self._modelgrad]).get()
         del tmpx
-
+        
         tmpres = self._pdop.run(result, res)
         for key in tmpres:
-            if key == "x":
+            if key == 'x':
                 if isinstance(tmpres[key], np.ndarray):
                     x = tmpres["x"]
                 else:
@@ -396,9 +378,9 @@ class IPianoOptimizer:
 
     def _calcResidual(self, x, data, it):
         """TODO: doc string"""
-        b, grad = self._calcFwdGNPartLinear(x)
+        b, grad, sym_grad = self._calcFwdGNPartLinear(x)
         grad_reg = grad[: self.par["unknowns_TGV"]]
-        grad_H1 = grad[self.par["unknowns_TGV"] :]
+        grad_H1 = grad[self.par["unknowns_TGV"] :]        
         del grad
 
         datacost = self.ipiano_par["delta"] / 2  * np.linalg.norm(data - b) ** 2
@@ -426,24 +408,28 @@ class IPianoOptimizer:
         return b
 
     def _calcFwdGNPartLinear(self, x):
-        """TODO: doc string"""
         if self._imagespace is False:
-            b = clarray.empty(self._queue[0], self._data_shape, dtype=self._DTYPE)
-            self._FT.FFT(
-                b,
-                clarray.to_device(
-                    self._queue[0], (self._step_val[:, None, ...] * self.par["C"])
-                ),
-            ).wait()
+            b = clarray.zeros(self._queue[0],
+                              self._data_shape,
+                              dtype=self._DTYPE)
+            self._FT.FFT(b, clarray.to_device(
+                self._queue[0],
+                (self._step_val[:, None, ...] *
+                 self.par["C"]))).wait()
             b = b.get()
         else:
             b = self._step_val
 
         x = clarray.to_device(self._queue[0], np.require(x, requirements="C"))
-        grad = clarray.to_device(
-            self._queue[0], np.zeros(x.shape + (4,), dtype=self._DTYPE)
-        )
-        grad.add_event(self._grad_op.fwd(grad, x, wait_for=grad.events + x.events))
+        grad = clarray.to_device(self._queue[0],
+                                 np.zeros(x.shape+(4,), dtype=self._DTYPE))
+        self._grad_op.fwd(
+            grad,
+            x,
+            wait_for=grad.events +
+            x.events).wait()
         x = x.get()
         grad = grad.get()
-        return b, grad
+        sym_grad = None
+        return b, grad, sym_grad
+        
